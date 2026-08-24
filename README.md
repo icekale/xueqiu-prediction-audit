@@ -107,16 +107,24 @@ python3 scripts/xueqiu_audit.py cookie
 python3 scripts/xueqiu_audit.py fetch 2292705444          # 默认薄样本
 python3 scripts/xueqiu_audit.py fetch 2292705444 --mode full
 
-# C. 入选（这一步由人/agent 判断）后打分出报告
+# C. 扫候选 → 按 inclusion.md 改成 calls.json → 打分
+python3 scripts/xueqiu_audit.py draft work/2292705444/posts.json --out work/2292705444/candidates.json
 python3 scripts/xueqiu_audit.py score work/2292705444/calls.json
 python3 scripts/xueqiu_audit.py report work/scorecard.json --out work/report
 
 # D. 公开组合对基准（累计 / 年化 / 超额 / 财富倍数）
 python3 scripts/xueqiu_audit.py cubes --example
 python3 scripts/xueqiu_audit.py cubes 2292705444 --from-dir work/2292705444
+python3 scripts/xueqiu_audit.py cubes --symbol ZH2001629 --from 2019-07-11 --to 2020-11-06
 ```
 
-`calls.json` 字段：`date` `side` `symbol` `horizon_m` `kind` `cat` `theme`。详见 `SKILL.md`。
+`calls.json` 必填：`date` `side` `symbol` `horizon_m` `kind`。详见 [`references/calls.md`](references/calls.md)。入选批注见 [`examples/inclusion.md`](examples/inclusion.md)。
+
+```bash
+python3 scripts/xueqiu_audit.py draft work/2292705444/posts.json --out work/2292705444/candidates.json
+```
+
+`draft` 只扫关键词，不能直接 `score`。V Push 时间线（`statuses` 数组或带 `statuses` 的对象）可直接 `import-posts`。
 
 行情不绑雪球：A 股前复权走东财 / 腾讯 / 新浪，美股港股走 Yahoo。只有这些都失败且你提供了登录态，才回退雪球日 K。
 
@@ -141,7 +149,7 @@ export XUEQIU_COOKIE_FILE="$HOME/.config/xueqiu-prediction-audit/cookie"
 财富倍数 = (1 + 组合累计) / (1 + 基准累计)
 ```
 
-基准按市场：A 股沪深300 / 中证500 / 科创50，美股 QQQ / SPY，港股恒指 / 恒生科技。每一列必须和组合落在同一重叠窗口；科创50 这类晚上市的会标明同窗起算日。短于一年的先写「不足以证明长期能力」，并标停更、非实盘。
+基准按市场：A 股沪深300 / 中证500 / 科创50，美股 QQQ / SPY，港股恒指 / 恒生科技。每一列必须和组合落在同一重叠窗口；科创50 这类晚上市的会标明同窗起算日。要比某一段而不是全寿命时加 `--from` `--to`。短于一年的先写「不足以证明长期能力」，并标停更、非实盘。
 
 药神样例「大票为主」2019-07-11～2020-11-06：+1490.74%，年化 +706.84%，相对沪深300 超额约 +1462pp，财富约 12.3 倍。已停更，作者写明不建议跟票。完整表见 [`examples/metalslime.md`](examples/metalslime.md)。
 
@@ -153,15 +161,18 @@ xueqiu-prediction-audit/
 ├── SKILL.md
 ├── LICENSE
 ├── requirements.txt          # 可选：browser-cookie3
-├── scripts/xueqiu_audit.py   # doctor / example / cookie / fetch / score / report / cubes
+├── scripts/xueqiu_audit.py   # doctor / example / cookie / fetch / draft / score / report / cubes
 ├── scripts/audit_core.py
 ├── references/scoring.md
+├── references/calls.md
 ├── references/report.md
 ├── references/cli.md
 ├── examples/metalslime.md
+├── examples/inclusion.md
 ├── examples/metalslime_calls.json
 ├── examples/metalslime_scorecard.json
 ├── examples/metalslime_cubes.json
+├── examples/draft_posts.json
 └── tests/test_core.py
 ```
 
@@ -184,7 +195,7 @@ Two light-theme reports for Xueqiu (and similar) public influencers:
 - **Prediction audit:** dated, directional, falsifiable calls scored as **direction**, **price targets**, and **copy-trade P&amp;L**.
 - **Cube quant:** public paper portfolios vs benchmarks — cumulative, annualized (only if ≥365 days), excess in percentage points, and wealth multiple `(1+cube)/(1+bench)`. Cube NAV never enters call scoring.
 
-Scraping is not the gate. Bundled CLI: `example` and `cubes --example` work offline; new accounts prefer a local post dump; prices default to East Money / Tencent / Sina / Yahoo.
+Scraping is not the gate. Bundled CLI: `example` and `cubes --example` work offline; `draft` only proposes candidates (never score them raw); new accounts prefer a local post dump; prices default to East Money / Tencent / Sina / Yahoo. Use `--from`/`--to` to score a cube window instead of its full life.
 
 ```bash
 git clone https://github.com/icekale/xueqiu-prediction-audit.git ~/.cursor/skills/xueqiu-prediction-audit

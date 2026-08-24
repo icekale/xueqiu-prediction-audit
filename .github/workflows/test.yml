@@ -1,0 +1,21 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: unit tests
+        run: python3 tests/test_core.py
+      - name: draft smoke
+        run: python3 scripts/xueqiu_audit.py draft examples/draft_posts.json --out /tmp/candidates.json
+      - name: validate bundled calls
+        run: python3 -c "import json,sys; sys.path.insert(0,'scripts'); import audit_core as c; e=c.validate_calls(json.load(open('examples/metalslime_calls.json'))); raise SystemExit(0 if not e else 1)"

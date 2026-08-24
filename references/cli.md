@@ -17,7 +17,7 @@ python3 scripts/xueqiu_audit.py cubes --example  # 只出组合量化
 python3 scripts/xueqiu_audit.py import-posts posts.json --out work/UID
 ```
 
-`posts.json` 可以是数组，或带 `posts` / `statuses` 的对象。字段至少有日期和正文。
+`posts.json` 可以是数组，或带 `posts` / `statuses` / `items` 的对象。字段至少有日期和正文。V Push 导出的雪球时间线（`statuses`）可直接喂，不必再爬。
 
 2. **本机已经登录雪球**
 
@@ -36,12 +36,16 @@ Cookie 写到 `~/.config/xueqiu-prediction-audit/cookie`（600）。也可用 `X
 
 ## 打分和报告
 
-入选仍由 agent 根据 `posts.json` 写 `calls.json`（字段见 SKILL.md）。之后是机械步骤：
+先扫候选，再人工入选（字段见 [calls.md](calls.md)，批注见 [inclusion.md](../examples/inclusion.md)）：
 
 ```bash
+python3 scripts/xueqiu_audit.py draft work/UID/posts.json --out work/UID/candidates.json
+# 改成 calls.json 后
 python3 scripts/xueqiu_audit.py score work/UID/calls.json --out work/UID/scorecard.json
 python3 scripts/xueqiu_audit.py report work/UID/scorecard.json --out work/UID/report
 ```
+
+`score` 会拒绝 `"draft": true`。不要把候选文件当终稿。
 
 `score` 缺行情时自动拉：A 股走东财 / 腾讯 / 新浪前复权，美股港股走 Yahoo；有 cookie 时才用雪球日 K。不要依赖雪球行情当唯一源。
 
@@ -54,8 +58,11 @@ Chrome 在的话会尝试 PDF/PNG。headless 有时僵死，**HTML 才是完成�
 ```bash
 python3 scripts/xueqiu_audit.py cubes UID --from-dir work/UID --out work/UID/cubes
 python3 scripts/xueqiu_audit.py cubes --symbol ZH2001629
+python3 scripts/xueqiu_audit.py cubes --symbol ZH2001629 --from 2019-07-11 --to 2020-11-06
 python3 scripts/xueqiu_audit.py cubes UID          # 需 cookie，现拉列表和净值
 ```
+
+`--from` / `--to` 是观察期，不是组合全寿命。基准仍按同一重叠窗口对齐。
 
 缺的基准行情走东财/Yahoo，不绑雪球。输出 `cubes_scorecard.json` + `cubes.html`。组合净值不进 `score`。
 

@@ -355,6 +355,8 @@ def cube_blurb(cube: dict) -> str:
             parts.append(bit + "。")
         if days >= 365 and any((bench.get("excess_pp") or 0) >= 40 for bench in benches):
             parts.append("这是组合层面的显著超额。")
+    if cube.get("custom_window"):
+        parts.append("本表是指定观察期，不是组合全寿命。")
     if cube.get("paper_only"):
         parts.append("作者写明与实盘不重合或不建议跟票，净值只当公开模拟盘。")
     if cube.get("stopped"):
@@ -370,21 +372,30 @@ def analyze_cube(
     nav: list,
     bench_navs: dict[str, tuple[str, list]],
     asof: date | None = None,
+    window_start: date | None = None,
+    window_end: date | None = None,
 ) -> dict:
-    if len(nav) < 5:
+    custom = bool(window_start or window_end)
+    if not custom and len(nav) < 5:
         return {
             "symbol": meta.get("symbol"),
             "name": meta.get("name"),
             "skip": "净值点太少",
         }
-    start, end = nav[0][0], nav[-1][0]
-    asof = asof or end
+    nav_start, nav_end = nav[0][0], nav[-1][0]
+    start = window_start or nav_start
+    end = window_end or nav_end
+    asof = asof or nav_end
     path = path_return_nav(nav, start, end)
     if not path:
-        return {"symbol": meta.get("symbol"), "name": meta.get("name"), "skip": "无法计算收益"}
+        return {
+            "symbol": meta.get("symbol"),
+            "name": meta.get("name"),
+            "skip": "指定观察期无重叠净值" if custom else "无法计算收益",
+        }
     desc = str(meta.get("description") or "")
     paper = any(key in desc for key in ("不重合", "不建议跟", "模拟", "非实盘"))
-    stopped = (asof - end).days >= 30
+    stopped = (asof - nav_end).days >= 30
     benches = []
     for symbol, (name, series) in bench_navs.items():
         pair = aligned_pair(nav, series, start, end)
@@ -421,6 +432,7 @@ def analyze_cube(
         "ann": annualized_pct(path["ret"], path["days"]),
         "paper_only": paper,
         "stopped": stopped,
+        "custom_window": custom,
         "benchmarks": benches,
     }
     cube["blurb"] = cube_blurb(cube)
@@ -487,6 +499,8 @@ def score_cubes(
     uid: str = "",
     home: str = "",
     title: str = "",
+    window_start: date | None = None,
+    window_end: date | None = None,
 ) -> dict:
     cache = dict(extra_benches or {})
     asof = asof or date.today()
@@ -524,10 +538,19 @@ def score_cubes(
                 bench_navs[code] = (name, series)
             except Exception:
                 continue
-        cubes.append(analyze_cube(meta, block["nav"], bench_navs, asof=asof))
+        cubes.append(
+            analyze_cube(
+                meta,
+                block["nav"],
+                bench_navs,
+                asof=asof,
+                window_start=window_start,
+                window_end=window_end,
+            )
+        )
     usable = sum(1 for cube in cubes if not cube.get("skip"))
     who = account or (f"UID {uid}" if uid else "")
-    return {
+    payload = {
         "title": title or (f"{who}公开组合量化" if who else "雪球组合量化"),
         "account": account,
         "uid": uid,
@@ -536,6 +559,12 @@ def score_cubes(
         "usable": usable,
         "cubes": cubes,
     }
+    if window_start or window_end:
+        payload["window"] = {
+            "from": str(window_start) if window_start else None,
+            "to": str(window_end) if window_end else None,
+        }
+    return payload
 
 
 def fetch_rsshub(uid: str, route: str = "user") -> list[dict]:
@@ -602,6 +631,180 @@ def normalize_posts(raw: Any) -> list[dict]:
 
 def parse_day(value: str) -> date:
     return datetime.strptime(value[:10], "%Y-%m-%d").date()
+
+
+def post_day(post: dict) -> date | None:
+    for key in ("created_str", "date"):
+        raw = str(post.get(key) or "").strip()
+        if len(raw) >= 10:
+            try:
+                return parse_day(raw)
+            except Exception:
+                pass
+        if raw:
+            for fmt in ("%a, %d %b %Y %H:%M:%S %z", "%a, %d %b %Y"):
+                try:
+                    return datetime.strptime(raw[:31], fmt).date()
+                except Exception:
+                    continue
+    ts = post.get("created_at") or post.get("created")
+    if isinstance(ts, str) and ts.isdigit():
+        ts = int(ts)
+    if isinstance(ts, (int, float)) and ts > 0:
+        if ts > 1e12:
+            ts = ts / 1000
+        try:
+            return datetime.fromtimestamp(ts, TZ).date()
+        except Exception:
+            return None
+    return None
+
+
+STOCK_TICKER_RE = re.compile(r"\$([^$()]+)\(([A-Za-z]{1,5}\d{0,6})\)\$")
+STOCK_BARE_RE = re.compile(r"\$([A-Z]{1,5})\$")
+LONG_HINTS = ("看多", "坚决看好", "现在可以买", "可以买了", "死多", "梭回", "上车")
+SHORT_HINTS = ("看空", "死空", "拒绝抄底", "不是底", "现在可以卖", "维持看空")
+TACTICAL_HINTS = ("现在可以", "拒绝抄底", "见底", "梭回", "点位")
+MOOD_HINTS = ("今天心情", "这周看着难受", "今天好难受")
+FRAME_HINTS = ("IRR", "供需", "去金融化")
+
+
+def _first_hit(text: str, keys: tuple[str, ...]) -> str | None:
+    for key in keys:
+        if key in text:
+            return key
+    return None
+
+
+def guess_horizon(text: str, kind: str) -> int:
+    if "五年" in text or "5年" in text:
+        return 60
+    if "三年" in text or "3年" in text:
+        return 36
+    if "两年" in text or "2年" in text:
+        return 24
+    if "一年" in text or "12个月" in text:
+        return 12
+    return 6 if kind == "tactical" else 12
+
+
+def extract_symbols(text: str) -> list[tuple[str, str]]:
+    found = []
+    seen = set()
+    for name, symbol in STOCK_TICKER_RE.findall(text):
+        symbol = symbol.upper()
+        if symbol not in seen:
+            seen.add(symbol)
+            found.append((symbol, name.strip()))
+    for symbol in STOCK_BARE_RE.findall(text):
+        symbol = symbol.upper()
+        if symbol not in seen:
+            seen.add(symbol)
+            found.append((symbol, symbol))
+    return found
+
+
+def draft_candidates(posts: list[dict], limit: int = 80) -> dict:
+    candidates = []
+    seen = set()
+    skipped = {"no_direction": 0, "mood": 0, "dup": 0}
+    for post in posts:
+        text = str(post.get("text") or post.get("title") or "")
+        if not text:
+            continue
+        day = post_day(post)
+        long_hit = _first_hit(text, LONG_HINTS)
+        short_hit = _first_hit(text, SHORT_HINTS)
+        if not long_hit and not short_hit:
+            skipped["no_direction"] += 1
+            continue
+        if _first_hit(text, MOOD_HINTS) and not (long_hit or short_hit):
+            skipped["mood"] += 1
+            continue
+        side = -1 if short_hit and not long_hit else 1 if long_hit and not short_hit else None
+        if side is None:
+            # both sides in one post: leave for review, default to last hint type
+            side = -1 if text.rfind(short_hit or "") > text.rfind(long_hit or "") else 1
+        kind = "tactical" if _first_hit(text, TACTICAL_HINTS) else "structure"
+        symbols = extract_symbols(text)
+        if not symbols:
+            symbols = [("", "")]
+        for symbol, name in symbols:
+            key = (str(day), symbol or name, side)
+            if key in seen:
+                skipped["dup"] += 1
+                continue
+            seen.add(key)
+            quote = text[:120]
+            why = f"命中关键词「{short_hit or long_hit}」"
+            if _first_hit(text, FRAME_HINTS) and kind == "structure":
+                why += "；文中有框架词，确认是否另有明确多空"
+            candidates.append(
+                {
+                    "draft": True,
+                    "needs_review": True,
+                    "id": str(post.get("id") or f"draft-{len(candidates)+1}"),
+                    "date": str(day) if day else "",
+                    "theme": (name or quote[:24]) or "待定",
+                    "side": side,
+                    "symbol": symbol,
+                    "horizon_m": guess_horizon(text, kind),
+                    "kind": kind,
+                    "cat": "",
+                    "note": why,
+                    "quote": quote,
+                    "source_id": post.get("id"),
+                }
+            )
+            if len(candidates) >= limit:
+                break
+        if len(candidates) >= limit:
+            break
+    return {
+        "draft": True,
+        "title": "预测候选（未入选）",
+        "note": "这是草稿，不是 calls.json。按 examples/inclusion.md 判断后再 score。",
+        "scanned": len(posts),
+        "kept": len(candidates),
+        "skipped": skipped,
+        "calls": candidates,
+    }
+
+
+def validate_calls(payload: dict) -> list[str]:
+    errors = []
+    if payload.get("draft") is True:
+        errors.append("这是 draft 候选，不是 calls.json。按 examples/inclusion.md 改完再 score")
+    calls = payload.get("calls") or payload.get("rows") or []
+    if not calls:
+        errors.append("没有 calls")
+        return errors
+    for i, call in enumerate(calls):
+        loc = call.get("id") or f"#{i+1}"
+        if call.get("draft"):
+            errors.append(f"{loc}: 仍是草稿，不能直接打分")
+        for key in ("date", "side", "symbol", "horizon_m", "kind"):
+            if call.get(key) in (None, ""):
+                errors.append(f"{loc}: 缺少 {key}")
+        if call.get("date"):
+            try:
+                parse_day(str(call["date"]))
+            except Exception:
+                errors.append(f"{loc}: date 无法解析")
+        if call.get("side") not in (1, -1, "1", "-1"):
+            errors.append(f"{loc}: side 必须是 1 或 -1")
+        if call.get("kind") not in ("structure", "tactical"):
+            errors.append(f"{loc}: kind 必须是 structure 或 tactical")
+        try:
+            if call.get("horizon_m") is not None and float(call["horizon_m"]) <= 0:
+                errors.append(f"{loc}: horizon_m 必须 > 0")
+        except (TypeError, ValueError):
+            errors.append(f"{loc}: horizon_m 不是数字")
+        pt = call.get("price_target")
+        if isinstance(pt, dict) and pt:
+            if pt.get("lo") is not None and not pt.get("symbol"):
+                errors.append(f"{loc}: price_target 有 lo 但没有 symbol")
+    return errors
 
 
 def to_series(rows: list[tuple[date, float, float, float, float]]) -> list[tuple]:
@@ -940,6 +1143,9 @@ def bucket(rows: list[dict], key: str) -> dict:
 
 
 def score_calls(payload: dict, price_dir: Path, asof: date | None = None) -> dict:
+    problems = validate_calls(payload)
+    if problems:
+        raise ValueError("；".join(problems[:8]))
     calls = payload.get("calls") or payload.get("rows") or []
     if not calls:
         raise ValueError("calls.json 里没有 calls")
@@ -1402,7 +1608,20 @@ def render_cubes_html(payload: dict) -> str:
     if skipped:
         items = "、".join(f"{html.escape(c.get('name') or c.get('symbol') or '')}（{html.escape(c.get('skip') or '')}）" for c in skipped)
         skip_html = f"<p class='small'>未纳入：{items}</p>"
-    meta = " · ".join(x for x in [account + (f"（UID {uid}）" if uid else ""), f"{len(cubes)} 个可计算组合", "公开模拟盘，不是实盘"] if x)
+    window = payload.get("window") or {}
+    window_bit = ""
+    if window.get("from") or window.get("to"):
+        window_bit = f"指定观察期 {window.get('from') or '组合首日'} 至 {window.get('to') or '组合末日'}"
+    meta = " · ".join(
+        x
+        for x in [
+            account + (f"（UID {uid}）" if uid else ""),
+            f"{len(cubes)} 个可计算组合",
+            window_bit,
+            "公开模拟盘，不是实盘",
+        ]
+        if x
+    )
     return f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>

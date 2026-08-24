@@ -84,6 +84,63 @@ class CubeMathTests(unittest.TestCase):
         self.assertNotIn("v1", html)
 
 
+class DraftTests(unittest.TestCase):
+    def test_draft_keeps_direction_drops_mood(self):
+        path = Path(__file__).resolve().parents[1] / "examples" / "draft_posts.json"
+        posts = core.normalize_posts(json.loads(path.read_text(encoding="utf-8")))
+        payload = core.draft_candidates(posts)
+        ids = [c["id"] for c in payload["calls"]]
+        self.assertEqual(ids, ["in-baotuan", "in-housing", "in-tactical"])
+        first = payload["calls"][0]
+        self.assertEqual(first["symbol"], "SZ399997")
+        self.assertEqual(first["side"], -1)
+        self.assertEqual(first["horizon_m"], 60)
+        self.assertEqual(first["kind"], "structure")
+        self.assertTrue(payload["draft"])
+        tactical = payload["calls"][2]
+        self.assertEqual(tactical["kind"], "tactical")
+        self.assertEqual(tactical["symbol"], "SH000300")
+
+    def test_validate_rejects_draft_and_accepts_mini(self):
+        draft = core.draft_candidates(
+            [{"created_str": "2024-02-05", "text": "看多 $沪深300(SH000300)$", "id": "x"}]
+        )
+        self.assertTrue(core.validate_calls(draft))
+        mini = json.loads(
+            (Path(__file__).resolve().parents[1] / "examples" / "mini_calls.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(core.validate_calls(mini), [])
+        bundled = json.loads(
+            (Path(__file__).resolve().parents[1] / "examples" / "metalslime_calls.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(core.validate_calls(bundled), [])
+
+
+class CubeWindowTests(unittest.TestCase):
+    def test_custom_window_uses_overlap(self):
+        nav = [
+            (date(2019, 7, 11), 1.0),
+            (date(2020, 1, 2), 3.0),
+            (date(2020, 6, 1), 4.0),
+            (date(2020, 11, 6), 6.0),
+            (date(2020, 11, 7), 6.1),
+        ]
+        cube = core.analyze_cube(
+            {"symbol": "ZH1", "name": "演示", "market": "cn", "description": "不建议跟票"},
+            nav,
+            {"SH000300": ("沪深300", [(date(2020, 1, 2), 100.0), (date(2020, 11, 6), 129.07)])},
+            asof=date(2026, 8, 24),
+            window_start=date(2020, 1, 2),
+            window_end=date(2020, 11, 6),
+        )
+        self.assertEqual(cube["from"], "2020-01-02")
+        self.assertEqual(cube["to"], "2020-11-06")
+        self.assertEqual(cube["ret"], 100.0)
+        self.assertTrue(cube["custom_window"])
+        self.assertTrue(cube["paper_only"])
+        self.assertIn("指定观察期", cube["blurb"])
+
+
 class BundleTests(unittest.TestCase):
     def test_example_scorecard_renders(self):
         path = Path(__file__).resolve().parents[1] / "examples" / "metalslime_scorecard.json"

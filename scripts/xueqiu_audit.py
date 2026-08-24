@@ -48,6 +48,7 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
     print("  python3 scripts/xueqiu_audit.py cookie")
     print("  python3 scripts/xueqiu_audit.py fetch 2292705444")
     print("  python3 scripts/xueqiu_audit.py import-posts posts.json")
+    print("  python3 scripts/xueqiu_audit.py draft work/2292705444/posts.json")
     return 0
 
 
@@ -161,7 +162,8 @@ def cmd_fetch(args: argparse.Namespace) -> int:
 
     (dest / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     print("out", dest)
-    print("下一步：根据 posts.json 写出 calls.json，再 score / report")
+    print("下一步：python3 scripts/xueqiu_audit.py draft", dest / "posts.json")
+    print("再按 examples/inclusion.md 改成 calls.json，然后 score / report")
     print("组合量化：python3 scripts/xueqiu_audit.py cubes", uid, "--from-dir", dest)
     if manifest.get("coverage") == "thin":
         print("覆盖：薄样本。生涯审计请加 --mode full（需要登录态，耗时更长）")
@@ -224,8 +226,27 @@ def ensure_prices(payload: dict, price_dir: Path) -> None:
         print(" ", source, "n=", len(series))
 
 
+def cmd_draft(args: argparse.Namespace) -> int:
+    raw = json.loads(Path(args.file).expanduser().read_text(encoding="utf-8"))
+    posts = core.normalize_posts(raw)
+    payload = core.draft_candidates(posts, limit=args.limit)
+    dest = Path(args.out or "work/candidates.json").expanduser()
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    print("scanned", payload["scanned"], "candidates", payload["kept"], dest)
+    print("这是草稿，不是 calls.json。按 examples/inclusion.md 入选后再 score。")
+    return 0 if payload["kept"] else 2
+
+
 def cmd_score(args: argparse.Namespace) -> int:
     payload = json.loads(Path(args.calls).expanduser().read_text(encoding="utf-8"))
+    problems = core.validate_calls(payload)
+    if problems:
+        print("calls.json 未通过校验：", file=sys.stderr)
+        for item in problems[:12]:
+            print(" ", item, file=sys.stderr)
+        print("字段见 references/calls.md，入选见 examples/inclusion.md", file=sys.stderr)
+        return 2
     price_dir = Path(args.prices or "work/prices").expanduser()
     price_dir.mkdir(parents=True, exist_ok=True)
     if not args.no_fetch:
@@ -425,6 +446,8 @@ def cmd_cubes(args: argparse.Namespace) -> int:
         account=account,
         uid=uid,
         home=f"https://xueqiu.com/u/{uid}" if uid else "",
+        window_start=core.parse_day(args.start) if args.start else None,
+        window_end=core.parse_day(args.end) if args.end else None,
     )
     score_path = dest / "cubes_scorecard.json"
     score_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -478,6 +501,11 @@ def build_parser() -> argparse.ArgumentParser:
     i.add_argument("file")
     i.add_argument("--out", default="work/import")
 
+    d = sub.add_parser("draft", help="从 posts.json 扫出预测候选，须人工入选后才能 score")
+    d.add_argument("file")
+    d.add_argument("--out", default="work/candidates.json")
+    d.add_argument("--limit", type=int, default=80)
+
     pr = sub.add_parser("prices", help="拉前复权日 K（东财 / Yahoo，有 cookie 时再用雪球）")
     pr.add_argument("--symbols", default="", help="逗号分隔，如 SH000300,SZ000002")
     pr.add_argument("--calls", help="从 calls.json 收集标的")
@@ -505,6 +533,8 @@ def build_parser() -> argparse.ArgumentParser:
     cu.add_argument("--example", action="store_true", help="离线复刻药神组合样例")
     cu.add_argument("--out", default="work/cubes")
     cu.add_argument("--asof")
+    cu.add_argument("--from", dest="start", help="观察期起，YYYY-MM-DD，默认组合首日")
+    cu.add_argument("--to", dest="end", help="观察期止，YYYY-MM-DD，默认组合末日")
     cu.add_argument("--png", action="store_true")
     cu.add_argument("--no-fetch", action="store_true", help="不补拉基准行情")
     return p
@@ -517,6 +547,7 @@ def main(argv: list[str] | None = None) -> int:
         "cookie": cmd_cookie,
         "fetch": cmd_fetch,
         "import-posts": cmd_import_posts,
+        "draft": cmd_draft,
         "prices": cmd_prices,
         "score": cmd_score,
         "report": cmd_report,
