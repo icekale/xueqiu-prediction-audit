@@ -1,0 +1,10 @@
+.DS_Store
+*.cookie
+cookie.txt
+.env
+config.yaml
+raw/
+prices/
+*.jsonl
+.idea/
+.vscode/
