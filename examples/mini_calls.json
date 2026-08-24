@@ -1,0 +1,17 @@
+{
+  "title": "最小打分样例",
+  "account": "demo",
+  "asof": "2026-08-24",
+  "calls": [
+    {
+      "id": "csi-202402",
+      "date": "2024-02-05",
+      "theme": "看多沪深300",
+      "side": 1,
+      "symbol": "SH000300",
+      "horizon_m": 12,
+      "kind": "tactical",
+      "cat": "点位/指数"
+    }
+  ]
+}

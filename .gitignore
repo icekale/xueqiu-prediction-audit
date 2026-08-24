@@ -4,7 +4,10 @@ cookie.txt
 .env
 config.yaml
 raw/
+work/
 prices/
 *.jsonl
 .idea/
 .vscode/
+__pycache__/
+*.pyc

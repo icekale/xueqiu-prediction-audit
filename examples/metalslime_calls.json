@@ -1,0 +1,432 @@
+{
+  "title": "药神公开预测审计",
+  "account": "metalslime",
+  "uid": "2292705444",
+  "home": "https://xueqiu.com/u/2292705444",
+  "asof": "2026-08-24",
+  "price_basis": "前复权收盘",
+  "corpus": "15779 条公开原创和 21 篇长文",
+  "calls": [
+    {
+      "id": "hisk-2019",
+      "date": "2019-05-31",
+      "theme": "海思科 / 环泊酚产业研究",
+      "side": 1,
+      "symbol": "SZ002653",
+      "horizon_m": 12,
+      "kind": "structure",
+      "cat": "医药",
+      "note": "长文，未报价位"
+    },
+    {
+      "id": "xqyy-2019",
+      "date": "2019-07-16",
+      "theme": "兴齐眼药 / 阿托品",
+      "side": 1,
+      "symbol": "SZ300573",
+      "horizon_m": 24,
+      "kind": "structure",
+      "cat": "医药",
+      "note": "绝对涨、相对医药指数弱"
+    },
+    {
+      "id": "pharma-2020",
+      "date": "2020-01-07",
+      "theme": "医药板块没有整体大机会",
+      "side": -1,
+      "symbol": "SH000991",
+      "horizon_m": 12,
+      "kind": "structure",
+      "cat": "医药",
+      "note": "疫情牛证伪"
+    },
+    {
+      "id": "lithium-2020",
+      "date": "2020-01-19",
+      "theme": "整车厂要控制上游锂电",
+      "side": 1,
+      "symbol": "SZ002460",
+      "horizon_m": 18,
+      "kind": "structure",
+      "cat": "周期/制造",
+      "note": "赣锋主升浪"
+    },
+    {
+      "id": "solar-cube-2020",
+      "date": "2020-03-01",
+      "theme": "组合重仓阳光电源",
+      "side": 1,
+      "symbol": "SZ300274",
+      "horizon_m": 8,
+      "kind": "structure",
+      "cat": "周期/制造",
+      "note": "组合非实盘"
+    },
+    {
+      "id": "baotuan-202103",
+      "date": "2021-03-15",
+      "theme": "抱团重回大烂臭，五年内完成",
+      "side": -1,
+      "symbol": "SZ399997",
+      "horizon_m": 60,
+      "kind": "structure",
+      "cat": "白酒/抱团",
+      "note": "原文写五年。24 个月窗口会误判成错（2022–2023 反弹）"
+    },
+    {
+      "id": "tongce-202106",
+      "date": "2021-06-10",
+      "theme": "坚决看好医疗服务 / 通策",
+      "side": 1,
+      "symbol": "SH600763",
+      "horizon_m": 12,
+      "kind": "structure",
+      "cat": "医药",
+      "note": "通策当时已在高位"
+    },
+    {
+      "id": "baotuan-dip-202107",
+      "date": "2021-07-23",
+      "theme": "老抱团不推荐抄底",
+      "side": -1,
+      "symbol": "SH600519",
+      "horizon_m": 12,
+      "kind": "tactical",
+      "cat": "白酒/抱团"
+    },
+    {
+      "id": "hsi-202112",
+      "date": "2021-12-22",
+      "theme": "恒指 PB<1 但不敢抄底",
+      "side": -1,
+      "symbol": "HKHSI",
+      "horizon_m": 12,
+      "kind": "tactical",
+      "cat": "点位/指数",
+      "note": "拒绝抄底，按空头计"
+    },
+    {
+      "id": "tcm-202112",
+      "date": "2021-12-27",
+      "theme": "继续看多中药",
+      "side": 1,
+      "symbol": "SZ399241",
+      "horizon_m": 6,
+      "kind": "tactical",
+      "cat": "医药"
+    },
+    {
+      "id": "housing-202209",
+      "date": "2022-09-25",
+      "theme": "一线城市宏观与盘口双见顶",
+      "side": -1,
+      "symbol": "SZ000002",
+      "horizon_m": 24,
+      "kind": "structure",
+      "cat": "地产",
+      "note": "v1 叙事有、表里没有"
+    },
+    {
+      "id": "baima-202210",
+      "date": "2022-10-11",
+      "theme": "白马不是底，不建议做反弹",
+      "side": -1,
+      "symbol": "SH000300",
+      "horizon_m": 6,
+      "kind": "tactical",
+      "cat": "点位/指数",
+      "note": "喊在 2022-10 大底附近"
+    },
+    {
+      "id": "growth-202210",
+      "date": "2022-10-17",
+      "theme": "成长股没法翻倍就是见顶",
+      "side": -1,
+      "symbol": "SZ399006",
+      "horizon_m": 6,
+      "kind": "tactical",
+      "cat": "点位/指数"
+    },
+    {
+      "id": "baijiu-5y-202212",
+      "date": "2022-12-13",
+      "theme": "能唱空五年白酒",
+      "side": -1,
+      "symbol": "SZ399997",
+      "horizon_m": 44,
+      "kind": "structure",
+      "cat": "白酒/抱团",
+      "note": "原文五年，样本期只到 2026-08"
+    },
+    {
+      "id": "property-2023",
+      "date": "2023-04-06",
+      "theme": "买地产，套利宏观分析师看多",
+      "side": 1,
+      "symbol": "SZ000002",
+      "horizon_m": 12,
+      "kind": "tactical",
+      "cat": "地产",
+      "note": "对 2022-09 空头的战术翻多"
+    },
+    {
+      "id": "moutai-collectible-2023",
+      "date": "2023-04-09",
+      "theme": "文玩崩了，小茅台要破发",
+      "side": -1,
+      "symbol": "SH600519",
+      "horizon_m": 24,
+      "kind": "structure",
+      "cat": "白酒/抱团"
+    },
+    {
+      "id": "housing-sell-202312",
+      "date": "2023-12-29",
+      "theme": "一线房子仍是绝佳卖点",
+      "side": -1,
+      "symbol": "SZ000002",
+      "horizon_m": 12,
+      "kind": "structure",
+      "cat": "地产",
+      "note": "买地产之后再翻回空房价"
+    },
+    {
+      "id": "bottom-202402",
+      "date": "2024-02-04",
+      "theme": "茅台 1350–1400 则指数见底",
+      "side": 1,
+      "symbol": "SH000300",
+      "horizon_m": 12,
+      "kind": "tactical",
+      "cat": "点位/指数",
+      "price_target": {
+        "symbol": "SH600519",
+        "lo": 1350,
+        "hi": 1400,
+        "window_days": 10,
+        "label": "见底时茅台 1350–1400"
+      }
+    },
+    {
+      "id": "housing-2024",
+      "date": "2024-06-23",
+      "theme": "救市不够稳住楼市",
+      "side": -1,
+      "symbol": "SZ000002",
+      "horizon_m": 12,
+      "kind": "structure",
+      "cat": "地产"
+    },
+    {
+      "id": "miniso-2024",
+      "date": "2024-09-03",
+      "theme": "名创式 IP 出海",
+      "side": 1,
+      "symbol": "MNSO",
+      "horizon_m": 12,
+      "kind": "structure",
+      "cat": "出海/IP"
+    },
+    {
+      "id": "ashare-202409",
+      "date": "2024-09-19",
+      "theme": "看多股市，明年权益好于国债",
+      "side": 1,
+      "symbol": "SH000300",
+      "horizon_m": 12,
+      "kind": "tactical",
+      "cat": "点位/指数",
+      "note": "924 前四天"
+    },
+    {
+      "id": "housing-202411",
+      "date": "2024-11-14",
+      "theme": "无论地产政策，维持看空房价",
+      "side": -1,
+      "symbol": "SZ000002",
+      "horizon_m": 12,
+      "kind": "structure",
+      "cat": "地产"
+    },
+    {
+      "id": "games-2025",
+      "date": "2025-06-11",
+      "theme": "二线游戏进入上行周期",
+      "side": 1,
+      "symbol": "SH603444",
+      "horizon_m": 6,
+      "kind": "structure",
+      "cat": "周期/制造"
+    },
+    {
+      "id": "wind-2025",
+      "date": "2025-08-22",
+      "theme": "风机反内卷涨价",
+      "side": 1,
+      "symbol": "SZ002487",
+      "horizon_m": 6,
+      "kind": "structure",
+      "cat": "周期/制造"
+    },
+    {
+      "id": "baijiu-hold-202511",
+      "date": "2025-11-20",
+      "theme": "拿好手里的白酒，Q4 更低概率不大",
+      "side": 1,
+      "symbol": "SZ399997",
+      "horizon_m": 3,
+      "kind": "tactical",
+      "cat": "白酒/抱团",
+      "note": "11-26 又说明年有包赚钱左侧；12-01 拒绝抄底"
+    },
+    {
+      "id": "baijiu-early-202512",
+      "date": "2025-12-01",
+      "theme": "白酒还早，拒绝抄底；飞天到 1200",
+      "side": -1,
+      "symbol": "SZ399997",
+      "horizon_m": 8,
+      "kind": "tactical",
+      "cat": "白酒/抱团",
+      "price_target": {
+        "kind": "feitian",
+        "level": 1200,
+        "by": "2026-06-30",
+        "label": "2026-06 前飞天批价 1200",
+        "hit": false
+      }
+    },
+    {
+      "id": "domestic-202512",
+      "date": "2025-12-05",
+      "theme": "赤字率出来后空一切内需",
+      "side": -1,
+      "symbol": "SZ399997",
+      "horizon_m": 8,
+      "kind": "tactical",
+      "cat": "白酒/抱团"
+    },
+    {
+      "id": "hstech-202603",
+      "date": "2026-03-12",
+      "theme": "恒生科技见底",
+      "side": 1,
+      "symbol": "HKHSTECH",
+      "horizon_m": 5,
+      "kind": "tactical",
+      "cat": "点位/指数"
+    },
+    {
+      "id": "oil-202603",
+      "date": "2026-03-19",
+      "theme": "油跑赢沪深300",
+      "side": 1,
+      "symbol": "SH601857",
+      "horizon_m": 5,
+      "kind": "tactical",
+      "cat": "周期/制造"
+    },
+    {
+      "id": "csi1000-202603",
+      "date": "2026-03-19",
+      "theme": "中小盘赚钱效应牛市结束",
+      "side": -1,
+      "symbol": "SH000852",
+      "horizon_m": 5,
+      "kind": "tactical",
+      "cat": "点位/指数"
+    },
+    {
+      "id": "storage-202603",
+      "date": "2026-03-31",
+      "theme": "储能集成已是买点",
+      "side": 1,
+      "symbol": "SZ300014",
+      "horizon_m": 5,
+      "kind": "tactical",
+      "cat": "周期/制造"
+    },
+    {
+      "id": "lithium-202605",
+      "date": "2026-05-11",
+      "theme": "锂矿比光伏更适合抄底",
+      "side": 1,
+      "symbol": "SZ002466",
+      "horizon_m": 3,
+      "kind": "tactical",
+      "cat": "周期/制造"
+    },
+    {
+      "id": "baijiu-no-202605",
+      "date": "2026-05-06",
+      "theme": "大概率 26 年白酒都不会有机会",
+      "side": -1,
+      "symbol": "SZ399997",
+      "horizon_m": 4,
+      "kind": "tactical",
+      "cat": "白酒/抱团",
+      "note": "推翻 2025-11 左侧预报"
+    },
+    {
+      "id": "zx-202606",
+      "date": "2026-06-08",
+      "theme": "大减旭创后早盘梭回抄底",
+      "side": 1,
+      "symbol": "SZ300308",
+      "horizon_m": 2,
+      "kind": "tactical",
+      "cat": "科技战术"
+    },
+    {
+      "id": "baijiu-202606",
+      "date": "2026-06-24",
+      "theme": "茅台新一轮基本面下行起点",
+      "side": -1,
+      "symbol": "SH600519",
+      "horizon_m": 2,
+      "kind": "tactical",
+      "cat": "白酒/抱团"
+    },
+    {
+      "id": "carbon-202606",
+      "date": "2026-06-29",
+      "theme": "死空内需碳基",
+      "side": -1,
+      "symbol": "SZ399997",
+      "horizon_m": 2,
+      "kind": "tactical",
+      "cat": "白酒/抱团"
+    },
+    {
+      "id": "ai-price-202607",
+      "date": "2026-07-08",
+      "theme": "远离 AI 涨价交易",
+      "side": -1,
+      "symbol": "SZ300308",
+      "horizon_m": 1.5,
+      "kind": "tactical",
+      "cat": "科技战术"
+    },
+    {
+      "id": "inno-202607",
+      "date": "2026-07-20",
+      "theme": "激进仓：互联网 + 创新药",
+      "side": 1,
+      "symbol": "SZ159992",
+      "horizon_m": 1,
+      "kind": "tactical",
+      "cat": "医药"
+    },
+    {
+      "id": "solar-202608",
+      "date": "2026-08-06",
+      "theme": "不赞成抄底光伏",
+      "side": -1,
+      "symbol": "SZ300274",
+      "horizon_m": 0.6,
+      "kind": "tactical",
+      "cat": "周期/制造",
+      "note": "窗口不足一个月"
+    }
+  ]
+}

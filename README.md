@@ -1,8 +1,10 @@
 # 公开预测审计 Skill
 
-把雪球（及同类平台）大 V 的公开发言，收成可证伪的方向样本，分开计算**方向 / 价位 / 照做**，并导出给客户看的浅色 PDF/PNG。
+把雪球（及同类平台）大 V 的公开发言，收成可证伪的方向样本，分开计算**方向 / 价位 / 照做**，并导出给客户看的浅色 HTML/PDF。
 
 这不是荐股框架，也不是某个博主的人格模拟。它只回答一件事：这些公开判断，事后对行情成立了多少。
+
+**爬雪球不是门槛。** 仓库带可执行脚本：离线样例零配置；新账号优先吃你已有的帖子；行情默认走东财/腾讯/新浪/Yahoo，不依赖雪球登录。
 
 English: [English](#english)
 
@@ -12,11 +14,11 @@ English: [English](#english)
 
 本 skill 要求 agent：
 
-1. 拉齐公开原创和长文，而不是只看热门帖。
+1. 先跑自带 CLI，不要手写爬虫。
 2. 同一论点只记首次清楚表述；翻案和数字价位另计。
 3. 结构（产业/周期）和战术（买卖点）分开打分。
 4. 照做用等权、同时报中位；并给出「一直拿住那条结构」的朴素对照。
-5. 客户稿用浅色系统黑体单栏，结论和跟单口径放最前。
+5. 客户稿用浅色系统黑体单栏；取数失败就降级为薄样本，不要卡死。
 
 样例（雪球 metalslime / 药神，39 条，截止 2026-08-24）见 [`examples/metalslime.md`](examples/metalslime.md)。
 
@@ -32,21 +34,19 @@ English: [English](#english)
 | 许可 | MIT |
 | 仓库 | https://github.com/icekale/xueqiu-prediction-audit |
 
-V Push 负责把公开动态收进来；本 skill 负责把历史发言做成可复核的预测审计。两者独立使用。
+V Push 负责把公开动态收进来；本 skill 负责把历史发言做成可复核的预测审计。两者独立使用。已在跑 V Push 的人可以把现有时间线 `import-posts`，不必再爬一次。
 
 ## 安装
 
-克隆到 agent 能读到的 skills 目录，然后重启对应产品。
+### 1. 装到 agent 能读到的 skills 目录
 
-### Cursor
+**Cursor**
 
 ```bash
 git clone https://github.com/icekale/xueqiu-prediction-audit.git ~/.cursor/skills/xueqiu-prediction-audit
 ```
 
-重启 Cursor，或新开一轮对话。
-
-### Codex
+**Codex**
 
 ```bash
 git clone https://github.com/icekale/xueqiu-prediction-audit.git
@@ -54,75 +54,93 @@ mkdir -p ~/.codex/skills
 cp -R xueqiu-prediction-audit ~/.codex/skills/
 ```
 
-重启 Codex。
-
-### Claude Code / 其他兼容 Agent Skills 的产品
+**Claude Code**
 
 ```bash
 git clone https://github.com/icekale/xueqiu-prediction-audit.git ~/.claude/skills/xueqiu-prediction-audit
 ```
 
-规范见 [agentskills.io](https://agentskills.io/specification)。目录里必须有 `SKILL.md`。
+重启对应产品。规范见 [agentskills.io](https://agentskills.io/specification)。
 
-### 更新
+### 2. 开箱自检（只需系统 Python 3.10+）
 
 ```bash
-cd ~/.cursor/skills/xueqiu-prediction-audit && git pull
+cd ~/.cursor/skills/xueqiu-prediction-audit
+python3 scripts/xueqiu_audit.py doctor
+python3 scripts/xueqiu_audit.py example
 ```
+
+`example` 会在 `work/example/` 写出浅色 HTML；本机有 Chrome 再尝试 PDF/PNG。这一步不需要雪球账号。
+
+可选：`pip install -r requirements.txt`，才能从本机浏览器一键导入你自己的雪球登录态。
+
+更新：`cd ~/.cursor/skills/xueqiu-prediction-audit && git pull`
 
 ## 使用方式
 
-直接对 agent 说：
+对 agent 说：
 
 ```text
-用公开预测审计 skill，审计这个雪球账号准不准：
+用公开预测审计 skill，审计这个雪球账号：
 https://xueqiu.com/u/2292705444
 ```
 
-或：
-
-```text
-按 xueqiu-prediction-audit 的口径，给客户出一份浅色 PDF
-```
-
-agent 应自动：核对身份 → 入选可证伪方向 → 分方向/价位/照做 → 分年与对照 → 浅色报告。
-
-### 雪球登录态（可选，但匿名经常失败）
-
-雪球会拦未登录抓取。把**你自己账号**的 cookie 放到环境变量，不要写进仓库：
+或自己跑：
 
 ```bash
-export XUEQIU_COOKIE="xq_a_token=...; ..."
+# A. 已有导出
+python3 scripts/xueqiu_audit.py import-posts posts.json --out work/2292705444
+
+# B. 浏览器已登录雪球
+python3 scripts/xueqiu_audit.py cookie
+python3 scripts/xueqiu_audit.py fetch 2292705444          # 默认薄样本
+python3 scripts/xueqiu_audit.py fetch 2292705444 --mode full
+
+# C. 入选（这一步由人/agent 判断）后打分出报告
+python3 scripts/xueqiu_audit.py score work/2292705444/calls.json
+python3 scripts/xueqiu_audit.py report work/scorecard.json --out work/report
 ```
 
-或：
+`calls.json` 字段：`date` `side` `symbol` `horizon_m` `kind` `cat` `theme`。详见 `SKILL.md`。
+
+行情不绑雪球：A 股前复权走东财 / 腾讯 / 新浪，美股港股走 Yahoo。只有这些都失败且你提供了登录态，才回退雪球日 K。
+
+Cookie 可放环境变量，不要写进仓库：
 
 ```bash
-export XUEQIU_COOKIE_FILE="$HOME/.config/xueqiu/cookie.txt"
+export XUEQIU_COOKIE="..."
+# 或
+export XUEQIU_COOKIE_FILE="$HOME/.config/xueqiu-prediction-audit/cookie"
 ```
 
-Agent 和脚本不得打印 cookie，不得写进 PDF/PNG。
-
-价格默认走雪球前复权日 K：`https://stock.xueqiu.com/v5/stock/chart/kline.json`。
+命令说明见 [`references/cli.md`](references/cli.md)。
 
 ## 仓库结构
 
 ```
 xueqiu-prediction-audit/
-├── README.md                 # 介绍、机构、安装、使用
-├── SKILL.md                  # agent 主指令
+├── README.md
+├── SKILL.md
 ├── LICENSE
-├── references/scoring.md     # 入选、阈值、对照
-├── references/report.md      # 浅色客户稿版式
-└── examples/metalslime.md    # 完整样例（药神）
+├── requirements.txt          # 可选：browser-cookie3
+├── scripts/xueqiu_audit.py   # doctor / example / cookie / fetch / score / report
+├── scripts/audit_core.py
+├── references/scoring.md
+├── references/report.md
+├── references/cli.md
+├── examples/metalslime.md
+├── examples/metalslime_calls.json
+├── examples/metalslime_scorecard.json
+└── tests/test_core.py
 ```
 
 ## 安全边界
 
-- 不要提交 cookie、token、`config.yaml`、原始时间线整库。
+- 不要提交 cookie、token、原始时间线整库。
 - 不要把组合净值写进标题战绩。
 - 不要对客户提内部版本号。
 - 不要把结果说成可跟盘的实盘信号。
+- 不要为了取数去绕过站点防护。
 
 ---
 
@@ -130,25 +148,13 @@ xueqiu-prediction-audit/
 
 # Public Prediction Audit Skill
 
-Audit dated, directional, falsifiable calls from Xueqiu (and similar public feeds). Score **direction**, **price targets**, and **copy-trade P&amp;L** separately, then export a light-theme client PDF/PNG.
+Audit dated, directional, falsifiable calls from Xueqiu (and similar public feeds). Score **direction**, **price targets**, and **copy-trade P&amp;L** separately. Export a light-theme client report.
 
-Not a stock-picking persona. Not investment advice.
-
-### Organization
-
-Author: [Kale](https://github.com/icekale). Independent / maintained alongside [V Push](https://vpush.net). MIT.
-
-### Install (Cursor)
+Scraping is not the gate. Bundled CLI: offline example works with zero config; new accounts prefer a local post dump; prices default to East Money / Tencent / Sina / Yahoo.
 
 ```bash
 git clone https://github.com/icekale/xueqiu-prediction-audit.git ~/.cursor/skills/xueqiu-prediction-audit
+python3 ~/.cursor/skills/xueqiu-prediction-audit/scripts/xueqiu_audit.py example
 ```
 
-### Usage
-
-```text
-Audit this Xueqiu user with the public prediction-audit skill:
-https://xueqiu.com/u/2292705444
-```
-
-Put your own Xueqiu cookie in `XUEQIU_COOKIE`. Never commit or print it.
+Author: [Kale](https://github.com/icekale). Independent / [V Push](https://vpush.net). MIT. Not investment advice.
