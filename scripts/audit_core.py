@@ -223,6 +223,321 @@ def fetch_cubes(uid: str, cookie: str) -> dict:
     return http_json(url, xueqiu_headers(cookie, f"https://xueqiu.com/u/{uid}"))
 
 
+def fetch_cube_nav(symbol: str, cookie: str) -> Any:
+    url = "https://xueqiu.com/cubes/nav_daily/all.json?" + urllib.parse.urlencode({"cube_symbol": symbol})
+    return http_json(url, xueqiu_headers(cookie, f"https://xueqiu.com/P/{symbol}"))
+
+
+CUBE_BENCHMARKS = {
+    "cn": [("SH000300", "沪深300"), ("SH000905", "中证500"), ("SH000688", "科创50")],
+    "us": [("QQQ", "QQQ"), ("SPY", "SPY")],
+    "hk": [("HKHSI", "恒生指数"), ("HKHSTECH", "恒生科技")],
+}
+MARKET_LABEL = {"cn": "A股", "us": "美股", "hk": "港股"}
+BENCH_NAMES = {code: name for pairs in CUBE_BENCHMARKS.values() for code, name in pairs}
+
+
+def parse_nav_payload(data: Any) -> dict[str, dict]:
+    if isinstance(data, dict) and isinstance(data.get("data"), list):
+        data = data["data"]
+    blocks = data if isinstance(data, list) else (data.get("list") if isinstance(data, dict) else []) or []
+    out: dict[str, dict] = {}
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        rows = []
+        for item in block.get("list") or []:
+            raw_day = item.get("date")
+            if not raw_day and item.get("time"):
+                try:
+                    raw_day = datetime.fromtimestamp(int(item["time"]) / 1000, TZ).date().isoformat()
+                except Exception:
+                    continue
+            try:
+                rows.append((parse_day(str(raw_day)), float(item.get("value"))))
+            except Exception:
+                continue
+        rows.sort(key=lambda x: x[0])
+        symbol = str(block.get("symbol") or "")
+        if symbol:
+            out[symbol] = {"name": block.get("name") or symbol, "nav": rows}
+    return out
+
+
+def nav_on_or_after(nav: list, day: date):
+    for item in nav:
+        if item[0] >= day:
+            return item
+    return None
+
+
+def nav_on_or_before(nav: list, day: date):
+    last = None
+    for item in nav:
+        if item[0] <= day:
+            last = item
+        else:
+            break
+    return last
+
+
+def path_return_nav(nav: list, start: date, end: date) -> dict | None:
+    a = nav_on_or_after(nav, start)
+    b = nav_on_or_before(nav, end)
+    if not a or not b or b[0] <= a[0] or a[1] == 0:
+        return None
+    return {
+        "from": str(a[0]),
+        "to": str(b[0]),
+        "px0": round(a[1], 6),
+        "px1": round(b[1], 6),
+        "ret": round((b[1] / a[1] - 1) * 100, 2),
+        "days": (b[0] - a[0]).days,
+    }
+
+
+def aligned_pair(cube_nav: list, bench_nav: list, start: date, end: date) -> tuple[dict, dict] | None:
+    cube0 = nav_on_or_after(cube_nav, start)
+    bench0 = nav_on_or_after(bench_nav, start)
+    if not cube0 or not bench0:
+        return None
+    start = max(cube0[0], bench0[0])
+    cube_path = path_return_nav(cube_nav, start, end)
+    bench_path = path_return_nav(bench_nav, start, end)
+    if not cube_path or not bench_path:
+        return None
+    return cube_path, bench_path
+
+
+def close_series(ohlc: list) -> list:
+    return [(row[0], row[4]) for row in ohlc]
+
+
+def annualized_pct(ret_pct: float, days: int) -> float | None:
+    if days < 365 or ret_pct is None:
+        return None
+    wealth = 1 + ret_pct / 100
+    if wealth <= 0:
+        return None
+    return round((wealth ** (365.25 / days) - 1) * 100, 2)
+
+
+def wealth_multiple(cube_ret_pct: float, bench_ret_pct: float) -> float | None:
+    denom = 1 + bench_ret_pct / 100
+    if denom <= 0:
+        return None
+    return round((1 + cube_ret_pct / 100) / denom, 2)
+
+
+def cube_blurb(cube: dict) -> str:
+    days = cube.get("days") or 0
+    months = max(1, round(days / 30.4))
+    ret = cube.get("ret")
+    benches = cube.get("benchmarks") or []
+    parts = []
+    if days >= 365:
+        parts.append(f"观察期 {days} 天（约 {round(days / 365.25, 1)} 年），跨过不同市场阶段，不能简单归因于一周运气。")
+    elif days < 20:
+        parts.append(f"观察期只有 {days} 天，不足以证明任何能力。")
+    else:
+        parts.append(f"观察期只有约 {months} 个月，不足以证明长期能力。")
+    if ret is not None and benches:
+        down = [b for b in benches if (b.get("ret") or 0) < 0]
+        if ret > 0 and down and len(down) == len(benches):
+            parts.append("区间内基准普遍下跌，组合仍录得正收益，说明这段里的行业选择或交易至少有效。")
+        for bench in benches:
+            if bench.get("excess_pp") is None:
+                continue
+            window_note = f"（{bench['from']} 起同窗）" if bench.get("shifted") else ""
+            bit = f"相对{bench['name']}{window_note}超额 {bench['excess_pp']:+.0f} 个百分点"
+            if bench.get("wealth_multiple") is not None:
+                bit += f"，期末财富约 {bench['wealth_multiple']} 倍"
+            parts.append(bit + "。")
+        if days >= 365 and any((bench.get("excess_pp") or 0) >= 40 for bench in benches):
+            parts.append("这是组合层面的显著超额。")
+    if cube.get("paper_only"):
+        parts.append("作者写明与实盘不重合或不建议跟票，净值只当公开模拟盘。")
+    if cube.get("stopped"):
+        parts.append(f"净值停在 {cube.get('to')}，之后没有更新。")
+    shown = cube.get("xueqiu_total_gain")
+    if shown is not None and ret is not None and abs(float(shown) - float(ret)) > 1:
+        parts.append(f"雪球页展示累计 {float(shown):+.2f}%，本表用区间首末净值。")
+    return "".join(parts)
+
+
+def analyze_cube(
+    meta: dict,
+    nav: list,
+    bench_navs: dict[str, tuple[str, list]],
+    asof: date | None = None,
+) -> dict:
+    if len(nav) < 5:
+        return {
+            "symbol": meta.get("symbol"),
+            "name": meta.get("name"),
+            "skip": "净值点太少",
+        }
+    start, end = nav[0][0], nav[-1][0]
+    asof = asof or end
+    path = path_return_nav(nav, start, end)
+    if not path:
+        return {"symbol": meta.get("symbol"), "name": meta.get("name"), "skip": "无法计算收益"}
+    desc = str(meta.get("description") or "")
+    paper = any(key in desc for key in ("不重合", "不建议跟", "模拟", "非实盘"))
+    stopped = (asof - end).days >= 30
+    benches = []
+    for symbol, (name, series) in bench_navs.items():
+        pair = aligned_pair(nav, series, start, end)
+        if not pair:
+            continue
+        cube_path, bpath = pair
+        excess = round(cube_path["ret"] - bpath["ret"], 2)
+        shifted = cube_path["from"] != path["from"] or cube_path["to"] != path["to"]
+        benches.append(
+            {
+                "symbol": symbol,
+                "name": name,
+                "ret": bpath["ret"],
+                "ann": annualized_pct(bpath["ret"], bpath["days"]),
+                "excess_pp": excess,
+                "wealth_multiple": wealth_multiple(cube_path["ret"], bpath["ret"]),
+                "from": bpath["from"],
+                "to": bpath["to"],
+                "cube_ret_aligned": cube_path["ret"] if shifted else None,
+                "shifted": shifted,
+            }
+        )
+    cube = {
+        "symbol": meta.get("symbol"),
+        "name": meta.get("name") or meta.get("symbol"),
+        "market": meta.get("market") or "cn",
+        "description": desc,
+        "followers": meta.get("follower_count"),
+        "xueqiu_total_gain": meta.get("total_gain"),
+        "from": path["from"],
+        "to": path["to"],
+        "days": path["days"],
+        "ret": path["ret"],
+        "ann": annualized_pct(path["ret"], path["days"]),
+        "paper_only": paper,
+        "stopped": stopped,
+        "benchmarks": benches,
+    }
+    cube["blurb"] = cube_blurb(cube)
+    if cube["ann"] is not None and benches and max(b.get("excess_pp") or 0 for b in benches) >= 40:
+        cube["headline"] = f"{cube['name']}的超额确实很强"
+    elif path["days"] >= 60 and path["days"] < 365 and path["ret"] > 0:
+        cube["headline"] = f"{cube['name']}虽然短，但表现也很突出"
+    else:
+        cube["headline"] = f"{cube['name']}对基准"
+    return cube
+
+
+def default_benchmarks(market: str) -> list[tuple[str, str]]:
+    return list(CUBE_BENCHMARKS.get((market or "cn").lower(), CUBE_BENCHMARKS["cn"]))
+
+
+def slim_cube_meta(item: dict) -> dict:
+    return {
+        "symbol": item.get("symbol"),
+        "name": item.get("name"),
+        "market": item.get("market") or "cn",
+        "description": item.get("description") or "",
+        "follower_count": item.get("follower_count"),
+        "total_gain": item.get("total_gain"),
+        "net_value": item.get("net_value"),
+        "closed_at": item.get("closed_at"),
+        "annualized_gain_rate": item.get("annualized_gain_rate"),
+    }
+
+
+def cube_list_items(payload: Any) -> list[dict]:
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict) and item.get("symbol")]
+    if isinstance(payload, dict):
+        for key in ("list", "cubes"):
+            if isinstance(payload.get(key), list):
+                return [item for item in payload[key] if isinstance(item, dict) and item.get("symbol")]
+    return []
+
+
+def discover_nav_files(folder: Path) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for path in folder.glob("cube_*_nav.json"):
+        symbol = path.name[len("cube_") : -len("_nav.json")]
+        out[symbol] = json.loads(path.read_text(encoding="utf-8"))
+    return out
+
+
+def _has_bench(bench_navs: dict[str, tuple[str, list]], code: str, name: str) -> bool:
+    for symbol, (label, _series) in bench_navs.items():
+        if symbol.upper() == code.upper() or label == name:
+            return True
+    return False
+
+
+def score_cubes(
+    metas: list[dict],
+    nav_payloads: dict[str, Any],
+    *,
+    extra_benches: dict[str, tuple[str, list]] | None = None,
+    asof: date | None = None,
+    fetch_price=None,
+    account: str = "",
+    uid: str = "",
+    home: str = "",
+    title: str = "",
+) -> dict:
+    cache = dict(extra_benches or {})
+    asof = asof or date.today()
+    cubes = []
+    for meta in metas:
+        symbol = str(meta.get("symbol") or "")
+        raw = nav_payloads.get(symbol)
+        if raw is None:
+            cubes.append({"symbol": symbol, "name": meta.get("name") or symbol, "skip": "缺少净值"})
+            continue
+        parsed = parse_nav_payload(raw)
+        block = parsed.get(symbol) or next((parsed[k] for k in parsed if str(k).startswith("ZH")), None)
+        if not block:
+            cubes.append({"symbol": symbol, "name": meta.get("name") or symbol, "skip": "净值无法解析"})
+            continue
+        if not meta.get("name"):
+            meta = {**meta, "name": block.get("name") or symbol}
+        bench_navs: dict[str, tuple[str, list]] = {}
+        for other, item in parsed.items():
+            if other == symbol or str(other).startswith("ZH"):
+                continue
+            bench_navs[other] = (item.get("name") or BENCH_NAMES.get(other, other), item["nav"])
+        for code, name in default_benchmarks(meta.get("market") or "cn"):
+            if _has_bench(bench_navs, code, name):
+                continue
+            if code in cache:
+                bench_navs[code] = cache[code]
+                continue
+            if not fetch_price:
+                continue
+            try:
+                ohlc, _source = fetch_price(code)
+                series = close_series(ohlc)
+                cache[code] = (name, series)
+                bench_navs[code] = (name, series)
+            except Exception:
+                continue
+        cubes.append(analyze_cube(meta, block["nav"], bench_navs, asof=asof))
+    usable = sum(1 for cube in cubes if not cube.get("skip"))
+    who = account or (f"UID {uid}" if uid else "")
+    return {
+        "title": title or (f"{who}公开组合量化" if who else "雪球组合量化"),
+        "account": account,
+        "uid": uid,
+        "home": home or (f"https://xueqiu.com/u/{uid}" if uid else ""),
+        "asof": str(asof),
+        "usable": usable,
+        "cubes": cubes,
+    }
+
+
 def fetch_rsshub(uid: str, route: str = "user") -> list[dict]:
     url = f"https://rsshub.app/xueqiu/{route}/{uid}"
     raw = http_bytes(url, {"User-Agent": UA, "Accept": "application/rss+xml,application/xml"})
@@ -760,6 +1075,12 @@ def pct(value) -> str:
     return f"{value:+.0f}%" if abs(value) >= 10 or float(value).is_integer() else f"{value:+.1f}%".replace(".0%", "%")
 
 
+def pct_fine(value) -> str:
+    if value is None:
+        return "—"
+    return f"{value:+.2f}%"
+
+
 def auto_conclusion(sc: dict) -> str:
     s = sc["summary"]
     st, ta = s.get("structure") or {}, s.get("tactical") or {}
@@ -1028,6 +1349,92 @@ def render_html(sc: dict) -> str:
   </div>
   <div class="callout"><strong>方法</strong>入选：有日期、有明确多空、能对流动标的。排除：段子、复述、当天情绪。方向：多头窗口 &gt;+5% 为对、&lt;−10% 为错；空头 &lt;−8% 为对、&gt;+10% 为错。照做等权，不自动对冲沪深300，不是实盘成交。不是投资建议。</div>
   <p class="small">{f'<a href="{html.escape(home)}">{html.escape(home.replace("https://", ""))}</a>' if home else ""}{" · " + html.escape(sc.get("corpus") or "") if sc.get("corpus") else ""}</p>
+</main>
+</body>
+</html>
+"""
+
+
+def render_cubes_html(payload: dict) -> str:
+    title = html.escape(payload.get("title") or "雪球组合量化")
+    account = html.escape(payload.get("account") or "")
+    uid = html.escape(str(payload.get("uid") or ""))
+    home = payload.get("home") or ""
+    cubes = [c for c in (payload.get("cubes") or []) if not c.get("skip")]
+    skipped = [c for c in (payload.get("cubes") or []) if c.get("skip")]
+    show_ann = any(c.get("ann") is not None for c in cubes)
+    sections = []
+    for cube in cubes:
+        rows = [[cube.get("name") or cube.get("symbol"), pct_fine(cube.get("ret")), pct_fine(cube.get("ann"))]]
+        for b in cube.get("benchmarks") or []:
+            rows.append([b.get("name"), pct_fine(b.get("ret")), pct_fine(b.get("ann"))])
+        if show_ann:
+            th = "<tr><th>标的</th><th class='r'>累计收益</th><th class='r'>年化收益</th></tr>"
+            body = "".join(
+                f"<tr><td>{html.escape(str(a))}</td><td class='r'>{html.escape(str(b))}</td><td class='r'>{html.escape(str(c))}</td></tr>"
+                for a, b, c in rows
+            )
+        else:
+            th = "<tr><th>标的</th><th class='r'>累计收益</th></tr>"
+            body = "".join(
+                f"<tr><td>{html.escape(str(a))}</td><td class='r'>{html.escape(str(b))}</td></tr>"
+                for a, b, _c in rows
+            )
+        market = MARKET_LABEL.get(str(cube.get("market") or "").lower(), cube.get("market") or "")
+        flags = []
+        if market:
+            flags.append(str(market))
+        if cube.get("stopped"):
+            flags.append("已停更")
+        if cube.get("paper_only"):
+            flags.append("非实盘")
+        flag = (" · " + " · ".join(flags)) if flags else ""
+        sections.append(
+            f"""
+  <div class="stack">
+    <h2>{html.escape(cube.get('headline') or cube.get('name') or '')}</h2>
+    <p class="small">{html.escape(str(cube.get('from')))} 至 {html.escape(str(cube.get('to')))} · {cube.get('days')} 天{html.escape(flag)}</p>
+    <table><thead>{th}</thead><tbody>{body}</tbody></table>
+    <p>{html.escape(cube.get('blurb') or '')}</p>
+  </div>"""
+        )
+    skip_html = ""
+    if skipped:
+        items = "、".join(f"{html.escape(c.get('name') or c.get('symbol') or '')}（{html.escape(c.get('skip') or '')}）" for c in skipped)
+        skip_html = f"<p class='small'>未纳入：{items}</p>"
+    meta = " · ".join(x for x in [account + (f"（UID {uid}）" if uid else ""), f"{len(cubes)} 个可计算组合", "公开模拟盘，不是实盘"] if x)
+    return f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>{title}</title>
+<style>
+  :root {{ --bg:#fff; --fg:#141414; --fg-2:rgba(20,20,20,.74); --stroke:rgba(20,20,20,.12); --fill:rgba(20,20,20,.06); --link:#2e79b5; }}
+  * {{ box-sizing:border-box; margin:0; padding:0; }}
+  html,body {{ background:var(--bg); color:var(--fg); }}
+  body {{ font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Hiragino Sans GB",sans-serif; font-size:14px; line-height:20px; }}
+  .sheet {{ width:720px; margin:0 auto; padding:20px 20px 28px; display:flex; flex-direction:column; gap:20px; }}
+  h1 {{ font-size:24px; line-height:30px; font-weight:590; }}
+  h2 {{ font-size:18px; line-height:24px; font-weight:590; }}
+  .small,.sec {{ color:var(--fg-2); font-size:12px; line-height:16px; }}
+  a {{ color:var(--link); }}
+  .callout {{ background:var(--fill); border:1px solid var(--stroke); border-radius:6px; padding:12px 14px; }}
+  .stack {{ display:flex; flex-direction:column; gap:8px; }}
+  table {{ width:100%; border-collapse:collapse; font-size:12px; font-variant-numeric:tabular-nums; }}
+  th {{ text-align:left; color:var(--fg-2); border-bottom:1px solid var(--stroke); padding:6px 8px 6px 0; }}
+  td {{ padding:5px 8px 5px 0; border-bottom:1px solid rgba(20,20,20,.08); }}
+  .r {{ text-align:right; }}
+  @media print {{ html,body {{ background:#fff; }} .sheet {{ width:auto; padding:0; }} -webkit-print-color-adjust:exact; print-color-adjust:exact; }}
+  @page {{ size:A4; margin:14mm 12mm; }}
+</style>
+</head>
+<body>
+<main class="sheet">
+  <div class="stack" style="gap:6px"><h1>{title}</h1><p class="sec">{meta}</p></div>
+  <div class="callout"><strong>口径</strong>雪球组合是公开模拟盘。作者写明与实盘不重合的，净值不当实盘战绩，也不并进预测命中。对照基准用同一起止日的前复权/指数点位。不是投资建议。</div>
+  {''.join(sections) or "<p>没有可计算的组合净值。</p>"}
+  {skip_html}
+  <p class="small">{f'<a href="{html.escape(home)}">{html.escape(home.replace("https://", ""))}</a>' if home else ""}</p>
 </main>
 </body>
 </html>

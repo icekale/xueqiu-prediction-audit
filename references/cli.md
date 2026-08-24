@@ -5,7 +5,8 @@
 ```bash
 cd /path/to/xueqiu-prediction-audit
 python3 scripts/xueqiu_audit.py doctor
-python3 scripts/xueqiu_audit.py example          # 零配置，离线出浅色报告
+python3 scripts/xueqiu_audit.py example          # 零配置：预测样例 + 组合样例
+python3 scripts/xueqiu_audit.py cubes --example  # 只出组合量化
 ```
 
 ## 审计新账号（按顺序试）
@@ -46,6 +47,18 @@ python3 scripts/xueqiu_audit.py report work/UID/scorecard.json --out work/UID/re
 
 Chrome 在的话会尝试 PDF/PNG。headless 有时僵死，**HTML 才是完成标准**。
 
+## 组合量化
+
+`fetch` 有登录态时会把每个组合的日净值存成 `cube_ZH*_nav.json`。之后：
+
+```bash
+python3 scripts/xueqiu_audit.py cubes UID --from-dir work/UID --out work/UID/cubes
+python3 scripts/xueqiu_audit.py cubes --symbol ZH2001629
+python3 scripts/xueqiu_audit.py cubes UID          # 需 cookie，现拉列表和净值
+```
+
+缺的基准行情走东财/Yahoo，不绑雪球。输出 `cubes_scorecard.json` + `cubes.html`。组合净值不进 `score`。
+
 ## 覆盖缺口
 
 | 模式 | 语料 | 能下的结论 |
@@ -54,4 +67,4 @@ Chrome 在的话会尝试 PDF/PNG。headless 有时僵死，**HTML 才是完成�
 | import / RSS / thin | 长文+热门+近页 | 近端与框架，须标明薄样本 |
 | full + cookie | 全原创时间线 | 生涯审计 |
 
-组合列表可以拉，净值不进加权。
+组合列表和净值可以拉，只进 `cubes` 报告，不进预测加权。

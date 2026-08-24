@@ -1,6 +1,6 @@
 # 公开预测审计 Skill
 
-把雪球（及同类平台）大 V 的公开发言，收成可证伪的方向样本，分开计算**方向 / 价位 / 照做**，并导出给客户看的浅色 HTML/PDF。
+把雪球（及同类平台）大 V 的公开发言，收成可证伪的方向样本，分开计算**方向 / 价位 / 照做**，并对公开组合做净值对基准（累计 / 年化 / 超额 / 财富倍数），导出给客户看的浅色 HTML/PDF。
 
 这不是荐股框架，也不是某个博主的人格模拟。它只回答一件事：这些公开判断，事后对行情成立了多少。
 
@@ -10,7 +10,7 @@ English: [English](#english)
 
 ## 介绍
 
-公开组合净值和粉丝数都不能当战绩。真正能对的，是带日期、带多空、能映射到流动标的的句子。
+公开组合净值和粉丝数都不能当实盘战绩。真正能对的，是带日期、带多空、能映射到流动标的的句子。组合只做模拟盘对基准，不并进命中加权。
 
 本 skill 要求 agent：
 
@@ -68,6 +68,7 @@ git clone https://github.com/icekale/xueqiu-prediction-audit.git ~/.claude/skill
 cd ~/.cursor/skills/xueqiu-prediction-audit
 python3 scripts/xueqiu_audit.py doctor
 python3 scripts/xueqiu_audit.py example
+python3 scripts/xueqiu_audit.py cubes --example
 ```
 
 `example` 会在 `work/example/` 写出浅色 HTML；本机有 Chrome 再尝试 PDF/PNG。这一步不需要雪球账号。
@@ -99,6 +100,10 @@ python3 scripts/xueqiu_audit.py fetch 2292705444 --mode full
 # C. 入选（这一步由人/agent 判断）后打分出报告
 python3 scripts/xueqiu_audit.py score work/2292705444/calls.json
 python3 scripts/xueqiu_audit.py report work/scorecard.json --out work/report
+
+# D. 公开组合对基准（累计 / 年化 / 超额 / 财富倍数）
+python3 scripts/xueqiu_audit.py cubes --example
+python3 scripts/xueqiu_audit.py cubes 2292705444 --from-dir work/2292705444
 ```
 
 `calls.json` 字段：`date` `side` `symbol` `horizon_m` `kind` `cat` `theme`。详见 `SKILL.md`。
@@ -123,7 +128,7 @@ xueqiu-prediction-audit/
 ├── SKILL.md
 ├── LICENSE
 ├── requirements.txt          # 可选：browser-cookie3
-├── scripts/xueqiu_audit.py   # doctor / example / cookie / fetch / score / report
+├── scripts/xueqiu_audit.py   # doctor / example / cookie / fetch / score / report / cubes
 ├── scripts/audit_core.py
 ├── references/scoring.md
 ├── references/report.md
@@ -131,6 +136,7 @@ xueqiu-prediction-audit/
 ├── examples/metalslime.md
 ├── examples/metalslime_calls.json
 ├── examples/metalslime_scorecard.json
+├── examples/metalslime_cubes.json
 └── tests/test_core.py
 ```
 
@@ -148,7 +154,7 @@ xueqiu-prediction-audit/
 
 # Public Prediction Audit Skill
 
-Audit dated, directional, falsifiable calls from Xueqiu (and similar public feeds). Score **direction**, **price targets**, and **copy-trade P&amp;L** separately. Export a light-theme client report.
+Audit dated, directional, falsifiable calls from Xueqiu (and similar public feeds). Score **direction**, **price targets**, and **copy-trade P&amp;L** separately. Quantify public cubes vs benchmarks (cumulative / annualized / excess / wealth multiple). Export a light-theme client report. Cube NAV never enters call scoring.
 
 Scraping is not the gate. Bundled CLI: offline example works with zero config; new accounts prefer a local post dump; prices default to East Money / Tencent / Sina / Yahoo.
 

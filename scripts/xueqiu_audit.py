@@ -44,6 +44,7 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
     print()
     print("下一步（任选一条）：")
     print("  python3 scripts/xueqiu_audit.py example")
+    print("  python3 scripts/xueqiu_audit.py cubes --example")
     print("  python3 scripts/xueqiu_audit.py cookie")
     print("  python3 scripts/xueqiu_audit.py fetch 2292705444")
     print("  python3 scripts/xueqiu_audit.py import-posts posts.json")
@@ -97,7 +98,25 @@ def cmd_fetch(args: argparse.Namespace) -> int:
             (dest / "cubes.json").write_text(json.dumps(cubes, ensure_ascii=False, indent=2), encoding="utf-8")
             manifest["cubes"] = cubes.get("totalCount")
             manifest["sources"].append("xueqiu_cubes")
-            print("cubes", cubes.get("totalCount"), "（净值不进加权）")
+            print("cubes", cubes.get("totalCount"), "（净值不进预测加权）")
+            nav_ok = 0
+            for item in core.cube_list_items(cubes):
+                symbol = item.get("symbol")
+                if not symbol:
+                    continue
+                try:
+                    nav = core.fetch_cube_nav(symbol, cookie)
+                    (dest / f"cube_{symbol}_nav.json").write_text(
+                        json.dumps(nav, ensure_ascii=False), encoding="utf-8"
+                    )
+                    nav_ok += 1
+                    time.sleep(0.25)
+                except Exception as exc:
+                    manifest["errors"].append(f"nav:{symbol}:{type(exc).__name__}")
+                    time.sleep(0.4)
+            if nav_ok:
+                manifest["sources"].append(f"xueqiu_cube_nav:{nav_ok}")
+                print("cube_nav", nav_ok)
         except Exception as exc:
             manifest["errors"].append(f"cubes:{type(exc).__name__}")
         pages = {"long": 20, "hot": 20, "original": 15 if args.mode == "thin" else 900}
@@ -143,6 +162,7 @@ def cmd_fetch(args: argparse.Namespace) -> int:
     (dest / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     print("out", dest)
     print("下一步：根据 posts.json 写出 calls.json，再 score / report")
+    print("组合量化：python3 scripts/xueqiu_audit.py cubes", uid, "--from-dir", dest)
     if manifest.get("coverage") == "thin":
         print("覆盖：薄样本。生涯审计请加 --mode full（需要登录态，耗时更长）")
     return 0 if manifest.get("posts") else 2
@@ -295,6 +315,125 @@ def cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def write_cube_report(payload: dict, dest: Path, png: bool) -> Path:
+    dest.mkdir(parents=True, exist_ok=True)
+    html_path = dest / "cubes.html"
+    html_path.write_text(core.render_cubes_html(payload), encoding="utf-8")
+    print("html", html_path)
+    export_pdf_png(html_path, dest, png=png)
+    return html_path
+
+
+def cmd_cubes(args: argparse.Namespace) -> int:
+    dest = out_dir(args.out, "work/cubes")
+    if args.example:
+        bundled = ROOT / "examples" / "metalslime_cubes.json"
+        payload = json.loads(bundled.read_text(encoding="utf-8"))
+        (dest / "cubes_scorecard.json").write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        write_cube_report(payload, dest, png=True)
+        print("这是离线组合样例，净值不进预测命中。")
+        return 0
+
+    asof = core.parse_day(args.asof) if args.asof else date.today()
+    cookie = core.read_cookie()
+    metas: list[dict] = []
+    navs: dict = {}
+    account = ""
+    uid = args.uid or ""
+    from_dir = Path(args.from_dir).expanduser() if args.from_dir else None
+
+    if from_dir:
+        if not from_dir.is_dir():
+            print("目录不存在：", from_dir, file=sys.stderr)
+            return 2
+        cubes_path = from_dir / "cubes.json"
+        if cubes_path.exists():
+            listed = core.cube_list_items(json.loads(cubes_path.read_text(encoding="utf-8")))
+            metas.extend(core.slim_cube_meta(item) for item in listed)
+            owner = (listed[0].get("owner") or {}) if listed else {}
+            account = account or owner.get("screen_name") or ""
+            uid = uid or str(listed[0].get("owner_id") or "")
+        navs.update(core.discover_nav_files(from_dir))
+
+    if args.symbol:
+        wanted = [s.strip() for s in args.symbol.split(",") if s.strip()]
+        have = {m.get("symbol") for m in metas}
+        for symbol in wanted:
+            if symbol not in have:
+                metas.append(core.slim_cube_meta({"symbol": symbol}))
+        if cookie:
+            for symbol in wanted:
+                if symbol in navs:
+                    continue
+                try:
+                    navs[symbol] = core.fetch_cube_nav(symbol, cookie)
+                    time.sleep(0.25)
+                except Exception as exc:
+                    print("nav failed", symbol, type(exc).__name__)
+
+    if args.uid and cookie:
+        try:
+            listed = core.cube_list_items(core.fetch_cubes(args.uid, cookie))
+            if not metas:
+                metas = [core.slim_cube_meta(item) for item in listed]
+            owner = (listed[0].get("owner") or {}) if listed else {}
+            account = account or owner.get("screen_name") or ""
+            uid = uid or args.uid
+            print("cubes", len(listed))
+            for item in listed:
+                symbol = item.get("symbol")
+                if not symbol or symbol in navs:
+                    continue
+                if args.symbol and symbol not in {s.strip() for s in args.symbol.split(",") if s.strip()}:
+                    continue
+                try:
+                    navs[symbol] = core.fetch_cube_nav(symbol, cookie)
+                    print("nav", symbol)
+                    time.sleep(0.25)
+                except Exception as exc:
+                    print("nav failed", symbol, type(exc).__name__)
+                    time.sleep(0.4)
+        except Exception as exc:
+            print("cubes list failed:", type(exc).__name__, file=sys.stderr)
+            if not metas:
+                return 1
+
+    if not metas and navs:
+        metas = [core.slim_cube_meta({"symbol": symbol}) for symbol in navs]
+
+    if not metas:
+        print(
+            "没有组合可算。任选其一：\n"
+            "  python3 scripts/xueqiu_audit.py cubes --example\n"
+            "  python3 scripts/xueqiu_audit.py cubes --from-dir work/UID\n"
+            "  python3 scripts/xueqiu_audit.py cookie && python3 scripts/xueqiu_audit.py cubes UID",
+            file=sys.stderr,
+        )
+        return 2
+
+    fetch_price = None
+    if not args.no_fetch:
+        fetch_price = lambda symbol: core.fetch_one_price(symbol, cookie)
+
+    payload = core.score_cubes(
+        metas,
+        navs,
+        asof=asof,
+        fetch_price=fetch_price,
+        account=account,
+        uid=uid,
+        home=f"https://xueqiu.com/u/{uid}" if uid else "",
+    )
+    score_path = dest / "cubes_scorecard.json"
+    score_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    print("usable", payload.get("usable"), "/", len(payload.get("cubes") or []), score_path)
+    write_cube_report(payload, dest, png=args.png)
+    print("组合净值不进入预测命中或照做加权。")
+    return 0 if payload.get("usable") else 2
+
+
 def cmd_example(args: argparse.Namespace) -> int:
     bundled = ROOT / "examples" / "metalslime_scorecard.json"
     dest = out_dir(args.out, "work/example")
@@ -315,12 +454,14 @@ def cmd_example(args: argparse.Namespace) -> int:
     html_path.write_text(core.render_html(sc), encoding="utf-8")
     print("html", html_path)
     export_pdf_png(html_path, dest, png=True)
-    print("这是离线样例，不需要雪球登录。审计新账号请 fetch 或 import-posts。")
+    cubes = json.loads((ROOT / "examples" / "metalslime_cubes.json").read_text(encoding="utf-8"))
+    write_cube_report(cubes, dest, png=True)
+    print("这是离线样例，不需要雪球登录。审计新账号请 fetch 或 import-posts。组合量化见 cubes.html。")
     return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="公开预测审计：取数 / 行情 / 打分 / 浅色报告")
+    p = argparse.ArgumentParser(description="公开预测审计：取数 / 行情 / 打分 / 组合量化 / 浅色报告")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("doctor", help="检查 Python、cookie、Chrome")
@@ -328,7 +469,7 @@ def build_parser() -> argparse.ArgumentParser:
     c = sub.add_parser("cookie", help="从本机浏览器或文件导入自己的雪球登录态")
     c.add_argument("--from-file", help="Cookie 文本文件，不要提交到 git")
 
-    f = sub.add_parser("fetch", help="拉公开主页、组合列表和时间线")
+    f = sub.add_parser("fetch", help="拉公开主页、组合列表/净值和时间线")
     f.add_argument("uid", help="雪球 UID，如 2292705444")
     f.add_argument("--mode", choices=("thin", "full"), default="thin", help="thin=长文+热门+近页；full=全原创")
     f.add_argument("--out", help="输出目录，默认 work/<uid>")
@@ -356,6 +497,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     e = sub.add_parser("example", help="离线复刻药神样例报告，零配置")
     e.add_argument("--out", default="work/example")
+
+    cu = sub.add_parser("cubes", help="组合净值对基准：累计 / 年化 / 超额 / 财富倍数")
+    cu.add_argument("uid", nargs="?", help="雪球 UID，如 2292705444")
+    cu.add_argument("--symbol", help="逗号分隔 ZH 代码，如 ZH2001629")
+    cu.add_argument("--from-dir", help="已有 cubes.json 与 cube_*_nav.json 的目录")
+    cu.add_argument("--example", action="store_true", help="离线复刻药神组合样例")
+    cu.add_argument("--out", default="work/cubes")
+    cu.add_argument("--asof")
+    cu.add_argument("--png", action="store_true")
+    cu.add_argument("--no-fetch", action="store_true", help="不补拉基准行情")
     return p
 
 
@@ -370,6 +521,7 @@ def main(argv: list[str] | None = None) -> int:
         "score": cmd_score,
         "report": cmd_report,
         "example": cmd_example,
+        "cubes": cmd_cubes,
     }[args.cmd]
     return fn(args)
 

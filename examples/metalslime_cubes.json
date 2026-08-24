@@ -1,0 +1,441 @@
+{
+  "title": "药神公开组合量化",
+  "account": "metalslime",
+  "uid": "2292705444",
+  "home": "https://xueqiu.com/u/2292705444",
+  "asof": "2026-08-24",
+  "usable": 8,
+  "cubes": [
+    {
+      "symbol": "ZH2001629",
+      "name": "大票为主",
+      "market": "cn",
+      "description": "组合跟实盘不重合，不构成投资建议，强烈不建议跟票",
+      "followers": 6680,
+      "xueqiu_total_gain": 1545.87,
+      "from": "2019-07-11",
+      "to": "2020-11-06",
+      "days": 484,
+      "ret": 1490.74,
+      "ann": 706.84,
+      "paper_only": true,
+      "stopped": true,
+      "benchmarks": [
+        {
+          "symbol": "SH000300",
+          "name": "沪深300",
+          "ret": 29.07,
+          "ann": 21.24,
+          "excess_pp": 1461.67,
+          "wealth_multiple": 12.32,
+          "from": "2019-07-11",
+          "to": "2020-11-06",
+          "cube_ret_aligned": null,
+          "shifted": false
+        },
+        {
+          "symbol": "SH000905",
+          "name": "中证500",
+          "ret": 30.07,
+          "ann": 21.94,
+          "excess_pp": 1460.67,
+          "wealth_multiple": 12.23,
+          "from": "2019-07-11",
+          "to": "2020-11-06",
+          "cube_ret_aligned": null,
+          "shifted": false
+        },
+        {
+          "symbol": "SH000688",
+          "name": "科创50",
+          "ret": 41.36,
+          "ann": null,
+          "excess_pp": 360.87,
+          "wealth_multiple": 3.55,
+          "from": "2020-01-02",
+          "to": "2020-11-06",
+          "cube_ret_aligned": 402.23,
+          "shifted": true
+        }
+      ],
+      "blurb": "观察期 484 天（约 1.3 年），跨过不同市场阶段，不能简单归因于一周运气。相对沪深300超额 +1462 个百分点，期末财富约 12.32 倍。相对中证500超额 +1461 个百分点，期末财富约 12.23 倍。相对科创50（2020-01-02 起同窗）超额 +361 个百分点，期末财富约 3.55 倍。这是组合层面的显著超额。作者写明与实盘不重合或不建议跟票，净值只当公开模拟盘。净值停在 2020-11-06，之后没有更新。雪球页展示累计 +1545.87%，本表用区间首末净值。",
+      "headline": "大票为主的超额确实很强"
+    },
+    {
+      "symbol": "ZH1376518",
+      "name": "再当价投我是狗",
+      "market": "cn",
+      "description": "",
+      "followers": 118,
+      "xueqiu_total_gain": 50.28,
+      "from": "2018-07-30",
+      "to": "2019-11-07",
+      "days": 465,
+      "ret": 49.99,
+      "ann": 37.5,
+      "paper_only": false,
+      "stopped": true,
+      "benchmarks": [
+        {
+          "symbol": "SH000300",
+          "name": "沪深300",
+          "ret": 13.56,
+          "ann": 10.5,
+          "excess_pp": 36.43,
+          "wealth_multiple": 1.32,
+          "from": "2018-07-30",
+          "to": "2019-11-07",
+          "cube_ret_aligned": null,
+          "shifted": false
+        },
+        {
+          "symbol": "SH000905",
+          "name": "中证500",
+          "ret": -3.43,
+          "ann": -2.7,
+          "excess_pp": 53.42,
+          "wealth_multiple": 1.55,
+          "from": "2018-07-30",
+          "to": "2019-11-07",
+          "cube_ret_aligned": null,
+          "shifted": false
+        }
+      ],
+      "blurb": "观察期 465 天（约 1.3 年），跨过不同市场阶段，不能简单归因于一周运气。相对沪深300超额 +36 个百分点，期末财富约 1.32 倍。相对中证500超额 +53 个百分点，期末财富约 1.55 倍。这是组合层面的显著超额。净值停在 2019-11-07，之后没有更新。",
+      "headline": "再当价投我是狗的超额确实很强"
+    },
+    {
+      "symbol": "ZH2335584",
+      "name": "小丑本丑",
+      "market": "cn",
+      "description": "仓位高的就是可以中长线的，低的一律是短线小票。",
+      "followers": 2518,
+      "xueqiu_total_gain": 24.65,
+      "from": "2020-11-12",
+      "to": "2021-04-23",
+      "days": 162,
+      "ret": 24.65,
+      "ann": null,
+      "paper_only": false,
+      "stopped": true,
+      "benchmarks": [
+        {
+          "symbol": "SH000300",
+          "name": "沪深300",
+          "ret": 4.62,
+          "ann": null,
+          "excess_pp": 20.03,
+          "wealth_multiple": 1.19,
+          "from": "2020-11-12",
+          "to": "2021-04-23",
+          "cube_ret_aligned": null,
+          "shifted": false
+        },
+        {
+          "symbol": "SH000905",
+          "name": "中证500",
+          "ret": 2.33,
+          "ann": null,
+          "excess_pp": 22.32,
+          "wealth_multiple": 1.22,
+          "from": "2020-11-12",
+          "to": "2021-04-23",
+          "cube_ret_aligned": null,
+          "shifted": false
+        },
+        {
+          "symbol": "SH000688",
+          "name": "科创50",
+          "ret": -7.18,
+          "ann": null,
+          "excess_pp": 31.83,
+          "wealth_multiple": 1.34,
+          "from": "2020-11-12",
+          "to": "2021-04-23",
+          "cube_ret_aligned": null,
+          "shifted": false
+        }
+      ],
+      "blurb": "观察期只有约 5 个月，不足以证明长期能力。相对沪深300超额 +20 个百分点，期末财富约 1.19 倍。相对中证500超额 +22 个百分点，期末财富约 1.22 倍。相对科创50超额 +32 个百分点，期末财富约 1.34 倍。净值停在 2021-04-23，之后没有更新。",
+      "headline": "小丑本丑虽然短，但表现也很突出"
+    },
+    {
+      "symbol": "ZH1995246",
+      "name": "对标科创医药",
+      "market": "cn",
+      "description": "",
+      "followers": 57,
+      "xueqiu_total_gain": 12.59,
+      "from": "2019-06-26",
+      "to": "2019-08-09",
+      "days": 44,
+      "ret": 13.95,
+      "ann": null,
+      "paper_only": false,
+      "stopped": true,
+      "benchmarks": [
+        {
+          "symbol": "SH000300",
+          "name": "沪深300",
+          "ret": -4.24,
+          "ann": null,
+          "excess_pp": 18.19,
+          "wealth_multiple": 1.19,
+          "from": "2019-06-26",
+          "to": "2019-08-09",
+          "cube_ret_aligned": null,
+          "shifted": false
+        },
+        {
+          "symbol": "SH000905",
+          "name": "中证500",
+          "ret": -7.3,
+          "ann": null,
+          "excess_pp": 21.25,
+          "wealth_multiple": 1.23,
+          "from": "2019-06-26",
+          "to": "2019-08-09",
+          "cube_ret_aligned": null,
+          "shifted": false
+        }
+      ],
+      "blurb": "观察期只有约 1 个月，不足以证明长期能力。区间内基准普遍下跌，组合仍录得正收益，说明这段里的行业选择或交易至少有效。相对沪深300超额 +18 个百分点，期末财富约 1.19 倍。相对中证500超额 +21 个百分点，期末财富约 1.23 倍。净值停在 2019-08-09，之后没有更新。雪球页展示累计 +12.59%，本表用区间首末净值。",
+      "headline": "对标科创医药对基准"
+    },
+    {
+      "symbol": "ZH2573850",
+      "name": "医疗服务及老龄化",
+      "market": "cn",
+      "description": "法国在二战前尝试过我谈人口老龄化的时候留言提到的一切可以想过的措施，除了ai。",
+      "followers": 308,
+      "xueqiu_total_gain": 9.09,
+      "from": "2021-06-21",
+      "to": "2021-06-25",
+      "days": 4,
+      "ret": 4.73,
+      "ann": null,
+      "paper_only": false,
+      "stopped": true,
+      "benchmarks": [
+        {
+          "symbol": "SH000300",
+          "name": "沪深300",
+          "ret": 2.94,
+          "ann": null,
+          "excess_pp": 1.79,
+          "wealth_multiple": 1.02,
+          "from": "2021-06-21",
+          "to": "2021-06-25",
+          "cube_ret_aligned": null,
+          "shifted": false
+        },
+        {
+          "symbol": "SH000905",
+          "name": "中证500",
+          "ret": 1.58,
+          "ann": null,
+          "excess_pp": 3.15,
+          "wealth_multiple": 1.03,
+          "from": "2021-06-21",
+          "to": "2021-06-25",
+          "cube_ret_aligned": null,
+          "shifted": false
+        },
+        {
+          "symbol": "SH000688",
+          "name": "科创50",
+          "ret": 0.44,
+          "ann": null,
+          "excess_pp": 4.29,
+          "wealth_multiple": 1.04,
+          "from": "2021-06-21",
+          "to": "2021-06-25",
+          "cube_ret_aligned": null,
+          "shifted": false
+        }
+      ],
+      "blurb": "观察期只有 4 天，不足以证明任何能力。相对沪深300超额 +2 个百分点，期末财富约 1.02 倍。相对中证500超额 +3 个百分点，期末财富约 1.03 倍。相对科创50超额 +4 个百分点，期末财富约 1.04 倍。净值停在 2021-06-25，之后没有更新。雪球页展示累计 +9.09%，本表用区间首末净值。",
+      "headline": "医疗服务及老龄化对基准"
+    },
+    {
+      "symbol": "ZH2083908",
+      "name": "新能源懒汉组合",
+      "market": "cn",
+      "description": "最好业绩集体雷一下，大家好上车。",
+      "followers": 181,
+      "xueqiu_total_gain": 6.39,
+      "from": "2020-01-13",
+      "to": "2020-02-05",
+      "days": 23,
+      "ret": 6.81,
+      "ann": null,
+      "paper_only": false,
+      "stopped": true,
+      "benchmarks": [
+        {
+          "symbol": "SH000300",
+          "name": "沪深300",
+          "ret": -8.93,
+          "ann": null,
+          "excess_pp": 15.74,
+          "wealth_multiple": 1.17,
+          "from": "2020-01-13",
+          "to": "2020-02-05",
+          "cube_ret_aligned": null,
+          "shifted": false
+        },
+        {
+          "symbol": "SH000905",
+          "name": "中证500",
+          "ret": -7.84,
+          "ann": null,
+          "excess_pp": 14.65,
+          "wealth_multiple": 1.16,
+          "from": "2020-01-13",
+          "to": "2020-02-05",
+          "cube_ret_aligned": null,
+          "shifted": false
+        },
+        {
+          "symbol": "SH000688",
+          "name": "科创50",
+          "ret": 8.84,
+          "ann": null,
+          "excess_pp": -2.03,
+          "wealth_multiple": 0.98,
+          "from": "2020-01-13",
+          "to": "2020-02-05",
+          "cube_ret_aligned": null,
+          "shifted": false
+        }
+      ],
+      "blurb": "观察期只有约 1 个月，不足以证明长期能力。相对沪深300超额 +16 个百分点，期末财富约 1.17 倍。相对中证500超额 +15 个百分点，期末财富约 1.16 倍。相对科创50超额 -2 个百分点，期末财富约 0.98 倍。净值停在 2020-02-05，之后没有更新。",
+      "headline": "新能源懒汉组合对基准"
+    },
+    {
+      "symbol": "ZH3389053",
+      "name": "多恒生空纳指",
+      "skip": "净值点太少"
+    },
+    {
+      "symbol": "ZH3389062",
+      "name": "多恒生空纳指",
+      "skip": "净值点太少"
+    },
+    {
+      "symbol": "ZH3389064",
+      "name": "爱国主义教育基地",
+      "skip": "净值点太少"
+    },
+    {
+      "symbol": "ZH2372270",
+      "name": "茅台vs立讯精密",
+      "market": "cn",
+      "description": "",
+      "followers": 837,
+      "xueqiu_total_gain": -0.37,
+      "from": "2020-12-23",
+      "to": "2025-11-07",
+      "days": 1780,
+      "ret": -0.76,
+      "ann": -0.16,
+      "paper_only": false,
+      "stopped": true,
+      "benchmarks": [
+        {
+          "symbol": "SH000300",
+          "name": "沪深300",
+          "ret": -6.56,
+          "ann": -1.38,
+          "excess_pp": 5.8,
+          "wealth_multiple": 1.06,
+          "from": "2020-12-23",
+          "to": "2025-11-07",
+          "cube_ret_aligned": null,
+          "shifted": false
+        },
+        {
+          "symbol": "SH000905",
+          "name": "中证500",
+          "ret": 16.18,
+          "ann": 3.13,
+          "excess_pp": -16.94,
+          "wealth_multiple": 0.85,
+          "from": "2020-12-23",
+          "to": "2025-11-07",
+          "cube_ret_aligned": null,
+          "shifted": false
+        },
+        {
+          "symbol": "SH000688",
+          "name": "科创50",
+          "ret": 2.84,
+          "ann": 0.58,
+          "excess_pp": -3.6,
+          "wealth_multiple": 0.96,
+          "from": "2020-12-23",
+          "to": "2025-11-07",
+          "cube_ret_aligned": null,
+          "shifted": false
+        }
+      ],
+      "blurb": "观察期 1780 天（约 4.9 年），跨过不同市场阶段，不能简单归因于一周运气。相对沪深300超额 +6 个百分点，期末财富约 1.06 倍。相对中证500超额 -17 个百分点，期末财富约 0.85 倍。相对科创50超额 -4 个百分点，期末财富约 0.96 倍。净值停在 2025-11-07，之后没有更新。",
+      "headline": "茅台vs立讯精密对基准"
+    },
+    {
+      "symbol": "ZH2067545",
+      "name": "长线慢票自虐亏钱",
+      "market": "cn",
+      "description": "自虐亏钱超低风偏睡觉垃圾组合。",
+      "followers": 102,
+      "xueqiu_total_gain": -8.31,
+      "from": "2019-12-19",
+      "to": "2020-02-05",
+      "days": 48,
+      "ret": -8.79,
+      "ann": null,
+      "paper_only": false,
+      "stopped": true,
+      "benchmarks": [
+        {
+          "symbol": "SH000300",
+          "name": "沪深300",
+          "ret": -4.93,
+          "ann": null,
+          "excess_pp": -3.86,
+          "wealth_multiple": 0.96,
+          "from": "2019-12-19",
+          "to": "2020-02-05",
+          "cube_ret_aligned": null,
+          "shifted": false
+        },
+        {
+          "symbol": "SH000905",
+          "name": "中证500",
+          "ret": -2.25,
+          "ann": null,
+          "excess_pp": -6.54,
+          "wealth_multiple": 0.93,
+          "from": "2019-12-19",
+          "to": "2020-02-05",
+          "cube_ret_aligned": null,
+          "shifted": false
+        },
+        {
+          "symbol": "SH000688",
+          "name": "科创50",
+          "ret": 18.03,
+          "ann": null,
+          "excess_pp": -27.88,
+          "wealth_multiple": 0.76,
+          "from": "2020-01-02",
+          "to": "2020-02-05",
+          "cube_ret_aligned": -9.85,
+          "shifted": true
+        }
+      ],
+      "blurb": "观察期只有约 2 个月，不足以证明长期能力。相对沪深300超额 -4 个百分点，期末财富约 0.96 倍。相对中证500超额 -7 个百分点，期末财富约 0.93 倍。相对科创50（2020-01-02 起同窗）超额 -28 个百分点，期末财富约 0.76 倍。净值停在 2020-02-05，之后没有更新。",
+      "headline": "长线慢票自虐亏钱对基准"
+    }
+  ]
+}
