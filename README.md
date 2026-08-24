@@ -1,26 +1,30 @@
 # 公开预测审计 Skill
 
-把雪球（及同类平台）大 V 的公开发言，收成可证伪的方向样本，分开计算**方向 / 价位 / 照做**，并对公开组合做净值对基准（累计 / 年化 / 超额 / 财富倍数），导出给客户看的浅色 HTML/PDF。
+把雪球（及同类平台）大 V 的**公开发言**和**公开组合**做成可复核的两张浅色报告：
 
-这不是荐股框架，也不是某个博主的人格模拟。它只回答一件事：这些公开判断，事后对行情成立了多少。
+| 报告 | 回答什么 | 不回答什么 |
+| --- | --- | --- |
+| 预测审计 | 带日期、带多空的判断，事后方向 / 价位 / 照做各打多少 | 粉丝数、组合净值 |
+| 组合量化 | 公开组合相对基准的累计、年化、超额、财富倍数 | 实盘盈亏、能不能跟票 |
 
-**爬雪球不是门槛。** 仓库带可执行脚本：离线样例零配置；新账号优先吃你已有的帖子；行情默认走东财/腾讯/新浪/Yahoo，不依赖雪球登录。
+这不是荐股框架，也不是某个博主的人格模拟。组合默认是模拟盘；作者写明「与实盘不重合」的，净值不当战绩，也**不**并进预测命中。
+
+**爬雪球不是门槛。** 离线样例零配置；新账号优先吃你已有的帖子；行情默认走东财/腾讯/新浪/Yahoo。
 
 English: [English](#english)
 
 ## 介绍
 
-公开组合净值和粉丝数都不能当实盘战绩。真正能对的，是带日期、带多空、能映射到流动标的的句子。组合只做模拟盘对基准，不并进命中加权。
-
-本 skill 要求 agent：
+真正能对的，是带日期、带多空、能映射到流动标的的句子。本 skill 要求 agent：
 
 1. 先跑自带 CLI，不要手写爬虫。
 2. 同一论点只记首次清楚表述；翻案和数字价位另计。
 3. 结构（产业/周期）和战术（买卖点）分开打分。
 4. 照做用等权、同时报中位；并给出「一直拿住那条结构」的朴素对照。
-5. 客户稿用浅色系统黑体单栏；取数失败就降级为薄样本，不要卡死。
+5. 公开组合另出量化表，不和命中率混成一句「准」。
+6. 客户稿用浅色系统黑体单栏；取数失败就降级为薄样本，不要卡死。
 
-样例（雪球 metalslime / 药神，39 条，截止 2026-08-24）见 [`examples/metalslime.md`](examples/metalslime.md)。
+样例（雪球 metalslime / 药神，39 条预测 + 11 个组合，截止 2026-08-24）见 [`examples/metalslime.md`](examples/metalslime.md)。
 
 输出仅供研究。不是投资建议，不是买卖指令。
 
@@ -71,7 +75,7 @@ python3 scripts/xueqiu_audit.py example
 python3 scripts/xueqiu_audit.py cubes --example
 ```
 
-`example` 会在 `work/example/` 写出浅色 HTML；本机有 Chrome 再尝试 PDF/PNG。这一步不需要雪球账号。
+`example` 会在 `work/example/` 写出预测报告和组合报告；`cubes --example` 只出组合。本机有 Chrome 再尝试 PDF/PNG。这一步不需要雪球账号。
 
 可选：`pip install -r requirements.txt`，才能从本机浏览器一键导入你自己的雪球登录态。
 
@@ -84,6 +88,12 @@ python3 scripts/xueqiu_audit.py cubes --example
 ```text
 用公开预测审计 skill，审计这个雪球账号：
 https://xueqiu.com/u/2292705444
+```
+
+或只要组合量化：
+
+```text
+量化这个雪球大 V 的公开组合超额
 ```
 
 或自己跑：
@@ -120,6 +130,21 @@ export XUEQIU_COOKIE_FILE="$HOME/.config/xueqiu-prediction-audit/cookie"
 
 命令说明见 [`references/cli.md`](references/cli.md)。
 
+## 组合量化
+
+公开组合是另一张报告，不是预测样本。公式：
+
+```
+累计     = 区间末净值 / 区间首净值 - 1
+年化     = (1 + 累计) ** (365.25 / 天数) - 1    # 仅当天数 ≥ 365
+超额(pp) = 组合累计% - 基准累计%
+财富倍数 = (1 + 组合累计) / (1 + 基准累计)
+```
+
+基准按市场：A 股沪深300 / 中证500 / 科创50，美股 QQQ / SPY，港股恒指 / 恒生科技。每一列必须和组合落在同一重叠窗口；科创50 这类晚上市的会标明同窗起算日。短于一年的先写「不足以证明长期能力」，并标停更、非实盘。
+
+药神样例「大票为主」2019-07-11～2020-11-06：+1490.74%，年化 +706.84%，相对沪深300 超额约 +1462pp，财富约 12.3 倍。已停更，作者写明不建议跟票。完整表见 [`examples/metalslime.md`](examples/metalslime.md)。
+
 ## 仓库结构
 
 ```
@@ -154,13 +179,17 @@ xueqiu-prediction-audit/
 
 # Public Prediction Audit Skill
 
-Audit dated, directional, falsifiable calls from Xueqiu (and similar public feeds). Score **direction**, **price targets**, and **copy-trade P&amp;L** separately. Quantify public cubes vs benchmarks (cumulative / annualized / excess / wealth multiple). Export a light-theme client report. Cube NAV never enters call scoring.
+Two light-theme reports for Xueqiu (and similar) public influencers:
 
-Scraping is not the gate. Bundled CLI: offline example works with zero config; new accounts prefer a local post dump; prices default to East Money / Tencent / Sina / Yahoo.
+- **Prediction audit:** dated, directional, falsifiable calls scored as **direction**, **price targets**, and **copy-trade P&amp;L**.
+- **Cube quant:** public paper portfolios vs benchmarks — cumulative, annualized (only if ≥365 days), excess in percentage points, and wealth multiple `(1+cube)/(1+bench)`. Cube NAV never enters call scoring.
+
+Scraping is not the gate. Bundled CLI: `example` and `cubes --example` work offline; new accounts prefer a local post dump; prices default to East Money / Tencent / Sina / Yahoo.
 
 ```bash
 git clone https://github.com/icekale/xueqiu-prediction-audit.git ~/.cursor/skills/xueqiu-prediction-audit
 python3 ~/.cursor/skills/xueqiu-prediction-audit/scripts/xueqiu_audit.py example
+python3 ~/.cursor/skills/xueqiu-prediction-audit/scripts/xueqiu_audit.py cubes --example
 ```
 
 Author: [Kale](https://github.com/icekale). Independent / [V Push](https://vpush.net). MIT. Not investment advice.
