@@ -106,8 +106,9 @@ python3 scripts/xueqiu_audit.py import-posts posts.json --out work/2292705444
 export WAF_COOKIE_FILE=/path/to/waf_cookies.json
 python3 scripts/xueqiu_audit.py cookie --from-file waf_cookies.json
 python3 scripts/xueqiu_audit.py cookie
-python3 scripts/xueqiu_audit.py fetch 2292705444          # 默认薄样本；也接受主页 URL
+python3 scripts/xueqiu_audit.py fetch 2292705444          # 默认 deep：帖子+评论；也接受主页 URL
 python3 scripts/xueqiu_audit.py fetch 2292705444 --mode full
+python3 scripts/xueqiu_audit.py fetch 2292705444 --comment-posts 150
 
 # C. 扫候选 → 按 inclusion.md 改成 calls.json → 打分
 python3 scripts/xueqiu_audit.py draft work/2292705444/posts.json --out work/2292705444/candidates.json
@@ -167,7 +168,7 @@ xueqiu-prediction-audit/
 ├── requirements.txt          # 可选：browser-cookie3
 ├── scripts/xueqiu_audit.py   # doctor / example / cookie / fetch / draft / score / report / cubes
 ├── scripts/audit_core.py
-├── scripts/vpush_xueqiu.py   # sidecar cookie + UID / 正文（不内置 solver）
+├── scripts/vpush_xueqiu.py   # sidecar cookie + UID / 正文 / 评论语料（不内置 solver）
 ├── references/scoring.md
 ├── references/calls.md
 ├── references/report.md

@@ -183,30 +183,91 @@ def xueqiu_headers(cookie: str, referer: str) -> dict[str, str]:
 
 def slim_status(status: dict) -> dict:
     user = status.get("user") or {}
+    if not isinstance(user, dict):
+        user = {"screen_name": user}
     retweet = status.get("retweeted_status") or {}
+    text = vpush.prefer_full_text(status)
+    plain = vpush.strip_html(text)
     created = status.get("created_at")
-    created_str = ""
-    try:
-        ts = int(created)
-        if ts > 1e12:
-            ts /= 1000
-        created_str = datetime.fromtimestamp(ts, TZ).strftime("%Y-%m-%d %H:%M:%S")
-    except Exception:
-        created_str = str(created or "")
     return {
         "id": status.get("id"),
         "created_at": created,
-        "created_str": created_str,
+        "created_str": vpush.format_created(created or status.get("created_str")),
         "title": status.get("title") or "",
-        "text": vpush.prefer_full_text(status),
+        "text": text,
         "description": status.get("description") or "",
-        "like_count": status.get("like_count") or status.get("fav_count"),
-        "view_count": status.get("view_count"),
+        "like_count": status.get("like_count") or status.get("fav_count") or 0,
+        "view_count": status.get("view_count") or 0,
+        "comment_count": int(status.get("reply_count") or status.get("comment_count") or 0),
         "type": status.get("type"),
         "post_type": vpush.classify_status(status),
+        "comment_id": status.get("commentId") or status.get("comment_id"),
         "retweeted_text": retweet.get("text") or retweet.get("description") or "",
         "user": user.get("screen_name"),
+        "user_id": str(user.get("id") or status.get("user_id") or ""),
+        "url": vpush.status_url(status),
+        "images": vpush.extract_images(status),
+        "symbols": extract_symbols(plain) if plain else [],
+        "source": "reply" if vpush.classify_status(status) == "reply" else "post",
     }
+
+
+def fetch_status_comments(
+    status_id: str,
+    cookie: str,
+    author_uid: str = "",
+    max_pages: int = 5,
+    pause: float = 0.2,
+    get_json=None,
+) -> list[dict]:
+    getter = get_json or (lambda url, headers=None: http_json(url, headers or {}))
+    items: list[dict] = []
+    seen: set[Any] = set()
+    page = 1
+    while page <= max_pages:
+        params = {"id": status_id, "count": 20, "page": page, "asc": "0", "type": 0}
+        url = "https://xueqiu.com/statuses/comments.json?" + urllib.parse.urlencode(params)
+        data = getter(url, xueqiu_headers(cookie, f"https://xueqiu.com/{status_id}"))
+        rows = vpush.parse_comments_payload(data)
+        if not rows:
+            break
+        added = 0
+        for row in rows:
+            cid = row.get("id")
+            if cid in seen:
+                continue
+            seen.add(cid)
+            if not row.get("status_id"):
+                row = {**row, "status_id": status_id}
+            items.append(vpush.slim_comment(row, author_uid))
+            added += 1
+        if added == 0:
+            break
+        page += 1
+        if pause:
+            time.sleep(pause)
+    return items
+
+
+def build_audit_corpus(posts: list[dict], comments: list[dict], author_uid: str = "") -> list[dict]:
+    corpus = normalize_posts(posts)
+    for row in vpush.author_comment_items(comments, author_uid):
+        if not row.get("created_str") and row.get("created_at"):
+            row["created_str"] = vpush.format_created(row["created_at"])
+        corpus.append(row)
+    return corpus
+
+
+def load_audit_corpus(raw: Any) -> list[dict]:
+    if isinstance(raw, dict) and raw.get("corpus"):
+        return normalize_posts(raw["corpus"])
+    if isinstance(raw, dict) and raw.get("comments"):
+        uid = str(raw.get("uid") or raw.get("author_uid") or "")
+        posts = raw.get("posts") or raw.get("statuses") or raw.get("items") or []
+        if not isinstance(posts, list):
+            posts = []
+        return build_audit_corpus(posts, raw.get("comments") or [], uid)
+    return normalize_posts(raw)
 
 
 def fetch_xueqiu_timeline(
@@ -640,9 +701,10 @@ def normalize_posts(raw: Any) -> list[dict]:
     for item in raw:
         if not isinstance(item, dict):
             continue
-        text = vpush.prefer_full_text(item)
-        text = re.sub(r"<[^>]+>", " ", str(text))
-        text = re.sub(r"\s+", " ", html.unescape(text)).strip()
+        text = vpush.strip_html(vpush.prefer_full_text(item))
+        user = item.get("user") or item.get("screen_name")
+        if isinstance(user, dict):
+            user = user.get("screen_name")
         out.append(
             {
                 "id": item.get("id") or item.get("status_id"),
@@ -650,8 +712,14 @@ def normalize_posts(raw: Any) -> list[dict]:
                 "created_str": item.get("created_str") or item.get("date") or "",
                 "title": item.get("title") or "",
                 "text": text,
-                "description": item.get("description") or text,
-                "user": item.get("user") or item.get("screen_name"),
+                "description": vpush.strip_html(item.get("description") or text),
+                "user": user,
+                "user_id": str(item.get("user_id") or ""),
+                "source": item.get("source") or ("comment" if str(item.get("id") or "").startswith("c-") else "post"),
+                "status_id": item.get("status_id"),
+                "url": item.get("url") or "",
+                "post_type": item.get("post_type"),
+                "comment_count": item.get("comment_count") or 0,
             }
         )
     return out
@@ -765,6 +833,8 @@ def draft_candidates(posts: list[dict], limit: int = 80) -> dict:
             seen.add(key)
             quote = text[:120]
             why = f"命中关键词「{short_hit or long_hit}」"
+            if post.get("source") == "comment" or str(post.get("id") or "").startswith("c-"):
+                why += "；来自大V评论，核对是否首次清楚表述"
             if _first_hit(text, FRAME_HINTS) and kind == "structure":
                 why += "；文中有框架词，确认是否另有明确多空"
             candidates.append(

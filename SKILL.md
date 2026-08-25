@@ -1,6 +1,6 @@
 ---
 name: xueqiu-prediction-audit
-description: Use when auditing a Xueqiu or similar public influencer's stock predictions, scoring directional calls, copy-trade P&L, quantifying public cubes against benchmarks, producing a client prediction-audit PDF/PNG, or fetching Xueqiu timelines with a V Push / waf-bot sidecar cookie. Triggers include 预测审计, 命中率, 跟单, 雪球 KOL, 药神, metalslime, 公开预测, 组合量化, 超额收益, 雪球组合, vpush, waf-bot.
+description: Use when auditing a Xueqiu or similar public influencer's stock predictions, scoring directional calls, copy-trade P&L, quantifying public cubes against benchmarks, producing a client prediction-audit PDF/PNG, or deeply fetching Xueqiu posts plus the influencer's own comments with a V Push / waf-bot sidecar cookie. Triggers include 预测审计, 命中率, 跟单, 雪球 KOL, 药神, metalslime, 公开预测, 组合量化, 超额收益, 雪球组合, vpush, waf-bot, 评论.
 ---
 
 # 公开预测审计
@@ -24,7 +24,7 @@ python3 scripts/xueqiu_audit.py cubes --example
 `example` 零配置，离线出浅色报告。新账号按下面顺序，**卡在取数就降级，不要停死**。
 
 1. 用户已有 `posts.json` 或 V Push 时间线 → `import-posts`
-2. 已有 V Push waf-bot sidecar → `export WAF_COOKIE_FILE=.../waf_cookies.json` 或 `cookie --from-file waf_cookies.json`，再 `fetch UID`（默认 thin；UID 可以是主页链接）
+2. 已有 V Push waf-bot sidecar → `export WAF_COOKIE_FILE=.../waf_cookies.json` 或 `cookie --from-file waf_cookies.json`，再 `fetch UID`（默认 deep：全部时间线 + 问答 + 评论线程；UID 可以是主页链接）
 3. 本机浏览器已登录雪球 → `cookie` 然后 `fetch UID`
 4. 都没有 → `fetch` 走公开 RSS；仍失败就请用户登录、给 sidecar，或导出，同时用长文/已贴文本做薄样本
 5. `draft posts.json` 出候选，再按 [examples/inclusion.md](examples/inclusion.md) 改成 `calls.json`（这步是判断；禁止把草稿直接 score）
@@ -35,7 +35,7 @@ python3 scripts/xueqiu_audit.py cubes --example
 
 ## 入选
 
-有日期、有明确多空、能对到流动标的。同一论点只记**首次清楚表述**；翻案或新数字价位另计。
+有日期、有明确多空、能对到流动标的。同一论点只记**首次清楚表述**；翻案或新数字价位另计。大 V **自己的评论/回复**和主帖同等入选；粉丝评论只作上下文，不进 `calls.json`。
 
 排除：段子、复述、当天情绪、纯框架无方向。公开组合默认不是实盘，净值禁止进入预测加权；组合报告见 `cubes`。
 

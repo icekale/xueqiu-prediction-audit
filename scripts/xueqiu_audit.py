@@ -150,22 +150,82 @@ def cmd_fetch(args: argparse.Namespace) -> int:
                 print("cube_nav", nav_ok)
         except Exception as exc:
             _fetch_err("cubes", exc, manifest)
-        pages = {"long": 20, "hot": 20, "original": 15 if args.mode == "thin" else 900}
-        kinds = [("long", {"type": 2}), ("hot", {"type": 9}), ("original", {"type": 0})]
+        if args.mode == "thin":
+            kinds = [("long", {"type": 2}), ("hot", {"type": 9}), ("original", {"type": 0})]
+            pages = {"long": 20, "hot": 20, "original": 15}
+        elif args.mode == "full":
+            kinds = [("long", {"type": 2}), ("hot", {"type": 9}), ("original", {"type": 0})]
+            pages = {"long": 40, "hot": 20, "original": 900}
+        else:
+            kinds = [
+                ("all", {"type": 10}),
+                ("original", {"type": 0}),
+                ("long", {"type": 2}),
+                ("qa", {"type": 4}),
+                ("hot", {"type": 9}),
+            ]
+            pages = {"all": 200, "original": 200, "long": 40, "qa": 20, "hot": 20}
         posts = []
+        seen_posts: set = set()
         for kind, extra in kinds:
             try:
                 items = core.fetch_xueqiu_timeline(uid, cookie, kind, extra, pages[kind])
                 (dest / f"timeline_{kind}.json").write_text(json.dumps(items, ensure_ascii=False), encoding="utf-8")
-                posts.extend(items)
+                kept = 0
+                for item in items:
+                    sid = item.get("id")
+                    if sid in seen_posts:
+                        continue
+                    seen_posts.add(sid)
+                    posts.append(item)
+                    kept += 1
                 manifest["sources"].append(f"xueqiu_{kind}:{len(items)}")
-                print(kind, len(items))
+                print(kind, len(items), "unique", kept)
             except Exception as exc:
                 _fetch_err(kind, exc, manifest)
+        comments: list = []
+        want_comments = args.mode == "deep" and not args.no_comments and args.comment_posts > 0
+        if want_comments and posts:
+            targets = vpush.select_comment_targets(posts, limit=args.comment_posts)
+            print("comments", "posts", len(targets), "pages<=", args.comment_pages)
+            for item in targets:
+                sid = str(item.get("id") or "")
+                if not sid:
+                    continue
+                try:
+                    rows = core.fetch_status_comments(
+                        sid,
+                        cookie,
+                        author_uid=uid,
+                        max_pages=args.comment_pages,
+                        pause=0.2,
+                    )
+                    comments.extend(rows)
+                    print("  comments", sid, len(rows))
+                    time.sleep(0.2)
+                except Exception as exc:
+                    detail = _fetch_err(f"comments:{sid}", exc, manifest)
+                    if detail == "waf_blocked":
+                        print("评论拉取遇到防护页，已停下。帖子仍保留。")
+                        break
+                    time.sleep(0.4)
+            (dest / "comments.json").write_text(
+                json.dumps(comments, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            author_n = sum(1 for c in comments if c.get("is_author"))
+            manifest["sources"].append(f"xueqiu_comments:{len(comments)}")
+            manifest["author_comments"] = author_n
+            print("comments_total", len(comments), "author", author_n)
         if posts:
-            (dest / "posts.json").write_text(json.dumps(core.normalize_posts(posts), ensure_ascii=False, indent=2), encoding="utf-8")
-            manifest["posts"] = len(posts)
-            manifest["coverage"] = "thin" if args.mode == "thin" else "full"
+            corpus = core.build_audit_corpus(posts, comments, author_uid=uid)
+            (dest / "posts.json").write_text(json.dumps(corpus, ensure_ascii=False, indent=2), encoding="utf-8")
+            (dest / "corpus.json").write_text(
+                json.dumps({"uid": uid, "posts": posts, "comments": comments, "corpus": corpus}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            manifest["posts"] = len(corpus)
+            manifest["timeline_posts"] = len(posts)
+            manifest["coverage"] = args.mode
         elif any("waf_blocked" in err for err in manifest["errors"]):
             print("被防护页挡住。换 WAF_COOKIE_FILE / cookie --from-file，或 import-posts。不要启动 solver。")
     else:
@@ -199,14 +259,18 @@ def cmd_fetch(args: argparse.Namespace) -> int:
     print("再按 examples/inclusion.md 改成 calls.json，然后 score / report")
     print("组合量化：python3 scripts/xueqiu_audit.py cubes", uid, "--from-dir", dest)
     if manifest.get("coverage") == "thin":
-        print("覆盖：薄样本。生涯审计请加 --mode full（需要登录态，耗时更长）")
+        print("覆盖：薄样本。深挖帖子+评论请用 --mode deep")
+    elif manifest.get("coverage") == "full":
+        print("覆盖：全原创时间线。要评论线程请用 --mode deep")
+    elif manifest.get("coverage") == "deep":
+        print("覆盖：全部时间线 + 问答 + 评论线程。draft 会扫大V自己的评论。")
     return 0 if manifest.get("posts") else 2
 
 
 def cmd_import_posts(args: argparse.Namespace) -> int:
     dest = out_dir(args.out, "work/import")
     raw = json.loads(Path(args.file).expanduser().read_text(encoding="utf-8"))
-    posts = core.normalize_posts(raw)
+    posts = core.load_audit_corpus(raw)
     (dest / "posts.json").write_text(json.dumps(posts, ensure_ascii=False, indent=2), encoding="utf-8")
     print("posts", len(posts), dest / "posts.json")
     return 0
@@ -261,7 +325,7 @@ def ensure_prices(payload: dict, price_dir: Path) -> None:
 
 def cmd_draft(args: argparse.Namespace) -> int:
     raw = json.loads(Path(args.file).expanduser().read_text(encoding="utf-8"))
-    posts = core.normalize_posts(raw)
+    posts = core.load_audit_corpus(raw)
     payload = core.draft_candidates(posts, limit=args.limit)
     dest = Path(args.out or "work/candidates.json").expanduser()
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -527,8 +591,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     f = sub.add_parser("fetch", help="拉公开主页、组合列表/净值和时间线")
     f.add_argument("uid", help="雪球 UID 或主页，如 2292705444 / https://xueqiu.com/u/2292705444")
-    f.add_argument("--mode", choices=("thin", "full"), default="thin", help="thin=长文+热门+近页；full=全原创")
+    f.add_argument(
+        "--mode",
+        choices=("thin", "full", "deep"),
+        default="deep",
+        help="thin=长文+热门+近页；full=全原创；deep=全部时间线+问答+评论（默认）",
+    )
     f.add_argument("--out", help="输出目录，默认 work/<uid>")
+    f.add_argument("--comment-posts", type=int, default=80, help="deep 下最多拉多少条帖子的评论")
+    f.add_argument("--comment-pages", type=int, default=5, help="每条帖子评论最多翻几页，每页 20 条")
+    f.add_argument("--no-comments", action="store_true", help="deep 也只拉帖子，不拉评论线程")
 
     i = sub.add_parser("import-posts", help="导入已有时间线 JSON，不爬雪球")
     i.add_argument("file")

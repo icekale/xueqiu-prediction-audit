@@ -6,12 +6,16 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import os
 import re
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+
+TZ = timezone(timedelta(hours=8))
 
 CONFIG_DIR = Path.home() / ".config" / "xueqiu-prediction-audit"
 DEFAULT_SIDECAR = CONFIG_DIR / "waf_cookies.json"
@@ -180,12 +184,173 @@ def classify_status(status: dict) -> str | None:
     return "post"
 
 
+def format_created(value: Any) -> str:
+    try:
+        ts = int(value)
+        if ts > 1e12:
+            ts /= 1000
+        return datetime.fromtimestamp(ts, TZ).strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return str(value or "")
+
+
+def strip_html(text: str) -> str:
+    cleaned = re.sub(r"<[^>]+>", " ", str(text or ""))
+    cleaned = re.sub(r"\s+", " ", html.unescape(cleaned)).strip()
+    return cleaned
+
+
 def prefer_full_text(item: dict) -> str:
     desc = str(item.get("description") or "")
     text = str(item.get("text") or item.get("content") or "")
     if desc.rstrip().endswith(("…", "...")) and len(text) > len(desc):
         return text
+    if len(text) > len(desc):
+        return text
     return text or desc
+
+
+def extract_images(status: dict) -> list[str]:
+    out: list[str] = []
+    for key in ("original_pictures", "pics"):
+        for pic in status.get(key) or []:
+            url = (pic or {}).get("url") or ""
+            if url.startswith("//"):
+                url = f"https:{url}"
+            if url and url not in out:
+                out.append(url)
+            if len(out) >= 8:
+                return out
+    for url in str(status.get("pic") or "").split(","):
+        url = url.strip()
+        if url.startswith("//"):
+            url = f"https:{url}"
+        if "!" in url:
+            url = url.split("!", 1)[0]
+        if url and url not in out:
+            out.append(url)
+        if len(out) >= 8:
+            break
+    return out
+
+
+def status_url(status: dict) -> str:
+    target = str(status.get("target") or status.get("url") or "")
+    if target.startswith("http"):
+        return target
+    if target.startswith("/"):
+        return f"https://xueqiu.com{target}"
+    sid = status.get("id")
+    user = status.get("user") or {}
+    uid = user.get("id") if isinstance(user, dict) else None
+    if sid and uid:
+        return f"https://xueqiu.com/{uid}/{sid}"
+    if sid:
+        return f"https://xueqiu.com/{sid}"
+    return ""
+
+
+def comment_user_id(comment: dict) -> str:
+    if comment.get("user_id") not in (None, ""):
+        return str(comment.get("user_id"))
+    user = comment.get("user")
+    if isinstance(user, dict) and user.get("id") not in (None, ""):
+        return str(user.get("id"))
+    return ""
+
+
+def slim_comment(comment: dict, author_uid: str = "") -> dict:
+    user = comment.get("user") or {}
+    if not isinstance(user, dict):
+        user = {"screen_name": user}
+    parent = comment.get("reply_comment") or comment.get("in_reply_to_comment") or {}
+    if not isinstance(parent, dict):
+        parent = {}
+    parent_user = parent.get("user") or {}
+    if not isinstance(parent_user, dict):
+        parent_user = {"screen_name": parent_user}
+    uid = comment_user_id(comment)
+    return {
+        "id": comment.get("id"),
+        "status_id": comment.get("status_id") or comment.get("statusId"),
+        "created_at": comment.get("created_at") or comment.get("created"),
+        "created_str": format_created(comment.get("created_at") or comment.get("created") or comment.get("created_str")),
+        "text": prefer_full_text(comment),
+        "user": user.get("screen_name") or comment.get("screen_name") or "",
+        "user_id": uid,
+        "like_count": comment.get("like_count") or comment.get("fav_count") or 0,
+        "parent_text": prefer_full_text(parent) if parent else comment.get("parent_text") or "",
+        "parent_user": parent_user.get("screen_name") or comment.get("parent_user") or "",
+        "is_author": bool(author_uid) and uid == str(author_uid),
+    }
+
+
+def parse_comments_payload(data: Any) -> list[dict]:
+    if isinstance(data, list):
+        return [item for item in data if isinstance(item, dict)]
+    if not isinstance(data, dict):
+        return []
+    for key in ("comments", "list", "items"):
+        rows = data.get(key)
+        if isinstance(rows, list):
+            return [item for item in rows if isinstance(item, dict)]
+    return []
+
+
+def select_comment_targets(posts: list[dict], limit: int = 80) -> list[dict]:
+    ranked = []
+    for post in posts:
+        if not post.get("id"):
+            continue
+        if post.get("post_type") is None and post.get("retweeted_status"):
+            continue
+        count = int(post.get("comment_count") or post.get("reply_count") or 0)
+        ranked.append((count, post.get("created_at") or 0, post))
+    ranked.sort(key=lambda row: (row[0], row[1]), reverse=True)
+    picked = [post for count, _, post in ranked if count > 0][:limit]
+    if len(picked) >= limit:
+        return picked
+    have = {p.get("id") for p in picked}
+    for _, _, post in ranked:
+        if post.get("id") in have:
+            continue
+        picked.append(post)
+        if len(picked) >= limit:
+            break
+    return picked
+
+
+def author_comment_items(comments: list[dict], author_uid: str) -> list[dict]:
+    out = []
+    for raw in comments:
+        comment = raw if "is_author" in raw else slim_comment(raw, author_uid)
+        if author_uid and not comment.get("is_author") and comment_user_id(comment) != str(author_uid):
+            continue
+        if not author_uid and not comment.get("is_author"):
+            continue
+        body = strip_html(comment.get("text") or "")
+        parent = strip_html(comment.get("parent_text") or "")
+        if parent:
+            who = comment.get("parent_user") or "他人"
+            body = f"{body} （回复 @{who}：{parent}）"
+        if not body:
+            continue
+        out.append(
+            {
+                "id": f"c-{comment.get('id')}",
+                "source": "comment",
+                "status_id": comment.get("status_id"),
+                "created_at": comment.get("created_at"),
+                "created_str": comment.get("created_str") or "",
+                "title": "",
+                "text": body,
+                "description": body,
+                "user": comment.get("user"),
+                "user_id": comment.get("user_id"),
+                "post_type": "comment",
+            }
+        )
+    return out
 
 
 def is_waf_html(text: str, content_type: str = "") -> bool:

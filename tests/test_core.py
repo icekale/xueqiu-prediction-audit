@@ -274,6 +274,150 @@ class VpushBridgeTests(unittest.TestCase):
         self.assertEqual(xueqiu_audit.main(["fetch", "https://xueqiu.com/Syedc"]), 2)
 
 
+class DeepCorpusTests(unittest.TestCase):
+    def test_prefer_full_text_uses_longer_body(self):
+        body = vpush.prefer_full_text(
+            {"description": "截断摘要", "text": "这是完整长文，比摘要长很多，应作为正文。"}
+        )
+        self.assertIn("完整长文", body)
+
+    def test_slim_status_keeps_url_counts_and_symbols(self):
+        slim = core.slim_status(
+            {
+                "id": 88,
+                "created_at": 1700000000000,
+                "title": "看空茅台",
+                "description": "维持看空 $贵州茅台(SH600519)$",
+                "text": "维持看空 $贵州茅台(SH600519)$ 五年内",
+                "target": "/2292705444/88",
+                "reply_count": 12,
+                "like_count": 3,
+                "view_count": 100,
+                "commentId": 0,
+                "user": {"id": 2292705444, "screen_name": "药神"},
+            }
+        )
+        self.assertEqual(slim["url"], "https://xueqiu.com/2292705444/88")
+        self.assertEqual(slim["comment_count"], 12)
+        self.assertEqual(slim["user_id"], "2292705444")
+        self.assertIn("SH600519", [s for s, _ in slim["symbols"]])
+
+    def test_slim_comment_marks_author_and_parent(self):
+        comment = vpush.slim_comment(
+            {
+                "id": 9,
+                "status_id": 88,
+                "text": "看空 $贵州茅台(SH600519)$",
+                "user_id": 2292705444,
+                "user": {"id": 2292705444, "screen_name": "药神"},
+                "created_at": 1700000001000,
+                "reply_comment": {
+                    "text": "现在可以买吗",
+                    "user": {"screen_name": "球迷"},
+                },
+            },
+            author_uid="2292705444",
+        )
+        self.assertTrue(comment["is_author"])
+        self.assertEqual(comment["parent_text"], "现在可以买吗")
+        self.assertEqual(comment["parent_user"], "球迷")
+
+    def test_author_comments_enter_draft_corpus(self):
+        posts = [
+            {
+                "id": 88,
+                "created_str": "2021-03-15",
+                "text": "随便聊聊天气",
+                "user": "药神",
+            }
+        ]
+        comments = [
+            {
+                "id": 9,
+                "status_id": 88,
+                "created_str": "2021-03-16",
+                "text": "维持看空 $中证白酒(SZ399997)$",
+                "user": "药神",
+                "user_id": "2292705444",
+                "is_author": True,
+                "parent_text": "茅台是不是还能涨",
+            },
+            {
+                "id": 10,
+                "status_id": 88,
+                "created_str": "2021-03-16",
+                "text": "看多 $中证白酒(SZ399997)$",
+                "user": "球迷",
+                "user_id": "1",
+                "is_author": False,
+            },
+        ]
+        corpus = core.build_audit_corpus(posts, comments, author_uid="2292705444")
+        ids = [row["id"] for row in corpus]
+        self.assertIn("c-9", ids)
+        self.assertNotIn("c-10", ids)
+        author = next(row for row in corpus if row["id"] == "c-9")
+        self.assertEqual(author["source"], "comment")
+        self.assertIn("回复", author["text"])
+        payload = core.draft_candidates(corpus)
+        self.assertEqual(payload["calls"][0]["source_id"], "c-9")
+        self.assertIn("评论", payload["calls"][0]["note"])
+
+    def test_select_comment_targets_prefers_busy_posts(self):
+        posts = [
+            {"id": 1, "comment_count": 0, "created_at": 3},
+            {"id": 2, "comment_count": 40, "created_at": 1},
+            {"id": 3, "comment_count": 8, "created_at": 2},
+        ]
+        picked = [p["id"] for p in vpush.select_comment_targets(posts, limit=2)]
+        self.assertEqual(picked, [2, 3])
+
+    def test_fetch_comments_paginates_and_stops(self):
+        pages = {
+            "1": {
+                "comments": [
+                    {
+                        "id": 1,
+                        "text": "问",
+                        "user_id": 1,
+                        "user": {"id": 1, "screen_name": "fan"},
+                        "created_at": 1,
+                    }
+                ]
+            },
+            "2": {
+                "comments": [
+                    {
+                        "id": 2,
+                        "text": "看空茅台",
+                        "user_id": 2292705444,
+                        "user": {"id": 2292705444, "screen_name": "药神"},
+                        "created_at": 2,
+                        "reply_comment": {"text": "问", "user": {"screen_name": "fan"}},
+                    }
+                ]
+            },
+            "3": {"comments": []},
+        }
+
+        def get_json(url, headers=None):
+            import urllib.parse
+
+            qs = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+            return pages[qs["page"][0]]
+
+        items = core.fetch_status_comments(
+            "88",
+            cookie="xq_a_token=x",
+            author_uid="2292705444",
+            max_pages=5,
+            pause=0,
+            get_json=get_json,
+        )
+        self.assertEqual([c["id"] for c in items], [1, 2])
+        self.assertTrue(items[1]["is_author"])
+
+
 class BundleTests(unittest.TestCase):
     def test_example_scorecard_renders(self):
         path = Path(__file__).resolve().parents[1] / "examples" / "metalslime_scorecard.json"
