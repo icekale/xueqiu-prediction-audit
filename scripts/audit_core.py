@@ -7,7 +7,9 @@ import json
 import os
 import re
 import ssl
+import struct
 import time
+import zlib
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -1748,6 +1750,12 @@ def score_calls(
         scored["playbook_source"] = "author"
     else:
         scored["playbook_source"] = "auto"
+    if payload.get("briefs"):
+        scored["briefs"] = payload["briefs"]
+        scored["briefs_source"] = "author"
+    else:
+        scored["briefs"] = auto_briefs(scored)
+        scored["briefs_source"] = "auto"
     scored["persona"] = auto_persona(scored, posts)
     scored["consistency"] = auto_consistency(scored, posts)
     scored["mbti"] = auto_mbti(scored, posts)
@@ -2195,6 +2203,73 @@ def auto_playbook(sc: dict) -> list[str]:
     ]
 
 
+def auto_briefs(sc: dict) -> dict:
+    s = sc.get("summary") or {}
+    st, ta = s.get("structure") or {}, s.get("tactical") or {}
+    rows = list(sc.get("rows") or [])
+    years = s.get("by_year") or {}
+    cats = s.get("by_cat") or {}
+    pts = s.get("price_targets") or []
+    bases = [b for b in (sc.get("baselines") or {}).values() if b.get("copy") is not None]
+    bases.sort(key=lambda item: item.get("copy") or 0, reverse=True)
+    top = "、".join(f"{b.get('desc')}（{pct(b.get('copy'))}）" for b in bases[:2])
+    drag = "、".join(f"{b.get('desc')}（{pct(b.get('copy'))}）" for b in bases[-2:] if (b.get("copy") or 0) < 0)
+    copy = (
+        f"{s.get('n', 0)} 条等权中位 {pct(s.get('copy_window_median'))}，均值 {pct(s.get('copy_window_mean'))}。"
+        f"只做结构中位 {pct(st.get('copy_window_median'))}，只做战术中位 {pct(ta.get('copy_window_median'))}。"
+        "均值会被单笔大票拉开，跟单看中位。"
+    )
+    if top:
+        copy += f"对照表最稳的是{top}。"
+    if drag:
+        copy += f"结构里拖累的是{drag}。"
+
+    year_bits = [
+        f"{name} 年 {item.get('n')} 条、命中 {round((item.get('hit_rate') or 0) * 100)}%、照做 {pct(item.get('copy_window'))}"
+        for name, item in years.items()
+    ]
+    year = "；".join(year_bits) + "。" if year_bits else "分年样本不够，不单写趋势。"
+    names = list(years)
+    if len(names) >= 2:
+        first, last = years[names[0]], years[names[-1]]
+        a, b = first.get("hit_rate") or 0, last.get("hit_rate") or 0
+        if b < a - 0.05:
+            year += f"命中从 {names[0]} 滑到 {names[-1]}，近端窗口还没走完，不能外推。"
+        elif b > a + 0.05:
+            year += f"命中从 {names[0]} 升到 {names[-1]}，仍要看近端窗口是否走完。"
+
+    scored_cats = [(name, item) for name, item in cats.items() if item.get("n")]
+    theme = "主题样本偏少，分主题只作对照，不单独加权。"
+    if scored_cats:
+        best = max(scored_cats, key=lambda item: item[1].get("copy_window") or 0)
+        miss = [item for item in scored_cats if (item[1].get("n") or 0) >= 2 and (item[1].get("hit_rate") or 0) <= 0.34]
+        theme = f"照做最正的主题是{best[0]}（{pct(best[1].get('copy_window'))}，{best[1].get('n')} 条）。"
+        if miss:
+            theme += "命中偏低的是" + "、".join(f"{name} {item.get('对')}/{item.get('n')}" for name, item in miss[:3]) + "。"
+        theme += "主题不能和方向命中混成一句准。"
+
+    hit_pt = sum(1 for item in pts if item.get("verdict") == "对")
+    price = "本样本没有单独计分的数字价位。"
+    if pts:
+        price = f"数字价位 {hit_pt} / {len(pts)} 打中。方向对了不代表价位对；没打中的不要用后来的大行情回改。"
+
+    scored = [row for row in rows if row.get("dir_window") not in {None, "无法评分"}]
+    hits = [row for row in scored if row.get("dir_window") == "对"]
+    misses = [row for row in scored if row.get("dir_window") == "错"]
+    best_row = max(scored, key=lambda row: row.get("copy_window") or 0) if scored else None
+    worst_row = min(scored, key=lambda row: row.get("copy_window") or 0) if scored else None
+    give = min(scored, key=lambda row: row.get("giveback") if row.get("giveback") is not None else 0) if scored else None
+    detail = f"明细 {len(scored)} 条里窗口对 {len(hits)}、错 {len(misses)}。"
+    if best_row:
+        detail += f"最大正贡献是 {best_row.get('date')} {best_row.get('theme')}（照做 {pct(best_row.get('copy_window'))}）。"
+    if worst_row and (worst_row.get("copy_window") or 0) < 0:
+        detail += f"最拖累的是 {worst_row.get('date')} {worst_row.get('theme')}（照做 {pct(worst_row.get('copy_window'))}）。"
+    if give and give.get("giveback") is not None and give["giveback"] <= -40:
+        detail += f"回吐最大的是 {give.get('date')} {give.get('theme')}，高点回撤 {pct(give.get('giveback'))}。"
+    detail += "近端窗口不足的先当未完成，不要写成已经错或已经对。"
+    return {"copy": copy, "year": year, "theme": theme, "price": price, "detail": detail}
+
+
 def giveback_cards(sc: dict) -> list[dict]:
     cards = []
     for row in sc.get("rows") or []:
@@ -2226,6 +2301,7 @@ def render_html(sc: dict) -> str:
     title = html.escape(sc.get("title") or "公开预测审计")
     conclusion = html.escape(sc.get("conclusion") or auto_conclusion(sc))
     playbook = sc.get("playbook") or auto_playbook(sc)
+    briefs = sc.get("briefs") or auto_briefs(sc)
     persona = sc.get("persona") or auto_persona(sc)
     consistency = sc.get("consistency") or auto_consistency(sc)
     mbti = sc.get("mbti") or auto_mbti(sc)
@@ -2371,6 +2447,11 @@ def render_html(sc: dict) -> str:
     tbl_flip = table(["日期", "说法", "结果"], flip_rows) if flip_rows else "<p class='small'>本样本没有单独计分的数字价位。</p>"
     tbl_detail = table(["日期", "向", "类", "判断", "窗口", "照做", "至今"], detail, right={5, 6})
     bar_chart = bar_svg(year_hits, list(years.keys()))
+
+    def note(key: str) -> str:
+        text = (briefs or {}).get(key) or ""
+        return f'<p class="brief">{html.escape(text)}</p>' if text else ""
+
     return f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -2383,7 +2464,7 @@ def render_html(sc: dict) -> str:
     --fill:rgba(20,20,20,.06); --fill-2:rgba(20,20,20,.04); --link:#2e79b5;
   }}
   * {{ box-sizing:border-box; margin:0; padding:0; }}
-  html,body {{ background:var(--bg); color:var(--fg); }}
+  html,body {{ background:var(--bg); color:var(--fg); height:auto; overflow:visible; }}
   body {{ font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Hiragino Sans GB",sans-serif; font-size:14px; line-height:20px; }}
   .sheet {{ width:720px; margin:0 auto; padding:20px 20px 28px; display:flex; flex-direction:column; gap:20px; }}
   h1 {{ font-size:24px; line-height:30px; font-weight:590; letter-spacing:-.02em; }}
@@ -2411,18 +2492,18 @@ def render_html(sc: dict) -> str:
   tr:nth-child(even) td {{ background:var(--fill-2); }}
   .r {{ text-align:right; }}
   .stack {{ display:flex; flex-direction:column; gap:8px; }}
+  .brief {{ color:var(--fg); }}
   svg.plot {{ display:block; width:100%; }}
   svg.plot .grid line {{ stroke:var(--stroke); }}
   svg.plot .tick {{ fill:var(--fg-3); font-size:10px; font-family:-apple-system,"PingFang SC",sans-serif; }}
   svg.plot .bar {{ fill:#6b6b86; }}
   @media print {{
-    html,body {{ background:#fff !important; color:#141414 !important; }}
-    .sheet {{ width:auto; padding:0; }}
-    .callout,.stat,.card {{ break-inside:avoid; }}
-    tr {{ break-inside:avoid; }}
+    html,body {{ background:#fff !important; color:#141414 !important; height:auto !important; overflow:visible !important; }}
+    .sheet {{ width:720px; margin:0 auto; padding:20px; }}
+    thead {{ display:table-row-group; }}
+    .callout,.stat,.card,tr {{ break-inside:auto; page-break-inside:auto; }}
     -webkit-print-color-adjust:exact; print-color-adjust:exact;
   }}
-  @page {{ size:A4; margin:14mm 12mm; }}
 </style>
 </head>
 <body>
@@ -2445,20 +2526,24 @@ def render_html(sc: dict) -> str:
     <h2>照做与对照</h2>
     <p>{sc.get('n')} 条等权窗口：均值 {html.escape(pct(s.get('copy_window_mean')))}，中位 {html.escape(pct(s.get('copy_window_median')))}。只做结构中位 {html.escape(pct(st.get('copy_window_median')))}；只做战术中位 {html.escape(pct(ta.get('copy_window_median')))}。</p>
     {tbl_base}
+    {note("copy")}
   </div>
   <div class="stack">
     <h2>分年</h2>
     <p class="small">命中 = 窗口方向对 / 当年条数</p>
     {tbl_year}
     {bar_chart}
+    {note("year")}
   </div>
   <div class="stack">
     <h2>分主题</h2>
     {tbl_cat}
+    {note("theme")}
   </div>
   <div class="stack">
     <h2>价位与立场翻转</h2>
     {tbl_flip}
+    {note("price")}
   </div>
   <div class="stack">
     <h2>窗口对、拿到现在不是一回事</h2>
@@ -2468,6 +2553,7 @@ def render_html(sc: dict) -> str:
     <h2>{len(rows)} 条明细</h2>
     <p class="small">同一论点只记首次清楚表述。照做 = 多空符号 × 窗口涨跌。</p>
     {tbl_detail}
+    {note("detail")}
   </div>
   <div class="callout"><strong>方法</strong>入选：有日期、有明确多空、能对流动标的。排除：段子、复述、当天情绪。方向：多头窗口 &gt;+5% 为对、&lt;−10% 为错；空头 &lt;−8% 为对、&gt;+10% 为错。照做等权，不自动对冲沪深300，不是实盘成交。不是投资建议。</div>
   <p class="small">{f'<a href="{html.escape(home)}">{html.escape(home.replace("https://", ""))}</a>' if home else ""}{" · " + html.escape(sc.get("corpus") or "") if sc.get("corpus") else ""}</p>
@@ -2546,7 +2632,7 @@ def render_cubes_html(payload: dict) -> str:
 <style>
   :root {{ --bg:#fff; --fg:#141414; --fg-2:rgba(20,20,20,.74); --stroke:rgba(20,20,20,.12); --fill:rgba(20,20,20,.06); --link:#2e79b5; }}
   * {{ box-sizing:border-box; margin:0; padding:0; }}
-  html,body {{ background:var(--bg); color:var(--fg); }}
+  html,body {{ background:var(--bg); color:var(--fg); height:auto; overflow:visible; }}
   body {{ font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Hiragino Sans GB",sans-serif; font-size:14px; line-height:20px; }}
   .sheet {{ width:720px; margin:0 auto; padding:20px 20px 28px; display:flex; flex-direction:column; gap:20px; }}
   h1 {{ font-size:24px; line-height:30px; font-weight:590; }}
@@ -2559,8 +2645,7 @@ def render_cubes_html(payload: dict) -> str:
   th {{ text-align:left; color:var(--fg-2); border-bottom:1px solid var(--stroke); padding:6px 8px 6px 0; }}
   td {{ padding:5px 8px 5px 0; border-bottom:1px solid rgba(20,20,20,.08); }}
   .r {{ text-align:right; }}
-  @media print {{ html,body {{ background:#fff; }} .sheet {{ width:auto; padding:0; }} -webkit-print-color-adjust:exact; print-color-adjust:exact; }}
-  @page {{ size:A4; margin:14mm 12mm; }}
+  @media print {{ html,body {{ background:#fff; height:auto !important; overflow:visible !important; }} .sheet {{ width:720px; margin:0 auto; padding:20px; }} thead {{ display:table-row-group; }} -webkit-print-color-adjust:exact; print-color-adjust:exact; }}
 </style>
 </head>
 <body>
@@ -2574,6 +2659,236 @@ def render_cubes_html(payload: dict) -> str:
 </body>
 </html>
 """
+
+
+PAGE_HEIGHT_RE = re.compile(r'data-page-height="(\d+)"')
+PAGE_RULE_RE = re.compile(r"@page\s*\{[^}]*\}")
+
+
+def inject_measure_script(html: str) -> str:
+    style = (
+        "<style>html,body{height:auto!important;overflow:visible!important;}"
+        "@page{size:auto;margin:0;}</style>"
+    )
+    script = (
+        "<script>(function(){"
+        "var sheet=document.querySelector('main.sheet,.sheet,main');"
+        "var h=0;"
+        "if(sheet){var r=sheet.getBoundingClientRect();"
+        "h=Math.ceil(r.height+r.top+(window.scrollY||0)+24);}"
+        "h=Math.max(h,document.documentElement.scrollHeight||0,"
+        "document.body&&document.body.scrollHeight||0);"
+        'document.documentElement.setAttribute("data-page-height",String(h));'
+        "})();</script>"
+    )
+    out = html
+    if "</head>" in out:
+        out = out.replace("</head>", style + "\n</head>", 1)
+    if "</body>" in out:
+        return out.replace("</body>", script + "\n</body>", 1)
+    return out + style + script
+
+
+def inject_clip_css(html: str, offset_px: int, tile_h: int) -> str:
+    css = (
+        f"<style>html,body{{height:{int(tile_h)}px!important;overflow:hidden!important;}}"
+        f".xq-clip{{width:760px;height:{int(tile_h)}px;overflow:hidden;}}"
+        f".xq-inner{{position:relative;top:-{int(offset_px)}px;}}</style>"
+    )
+    if "</head>" in html:
+        html = html.replace("</head>", css + "</head>", 1)
+    else:
+        html = css + html
+    html = re.sub(r"<body([^>]*)>", r"<body\1><div class='xq-clip'><div class='xq-inner'>", html, count=1)
+    if "</body>" in html:
+        html = html.replace("</body>", "</div></div></body>", 1)
+    return html
+
+
+def apply_long_page_css(html: str, height_px: int, width_px: int = 760) -> str:
+    height_px = max(800, int(height_px))
+    rule = f"@page {{ size: {width_px}px {height_px}px; margin: 0; }}"
+    if PAGE_RULE_RE.search(html):
+        return PAGE_RULE_RE.sub(rule, html, count=2)
+    return html.replace("</style>", rule + "\n</style>", 1)
+
+
+def estimate_html_height_px(html: str) -> int:
+    rows = html.count("<tr>")
+    heads = html.count("<h2") + html.count("<h1")
+    return 720 + rows * 48 + heads * 80
+
+
+def _png_paeth(a: int, b: int, c: int) -> int:
+    p = a + b - c
+    pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+    if pa <= pb and pa <= pc:
+        return a
+    if pb <= pc:
+        return b
+    return c
+
+
+def read_png(path: Path) -> tuple[int, int, int, bytes]:
+    data = Path(path).read_bytes()
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
+        raise ValueError("not a png")
+    pos = 8
+    width = height = bit_depth = color_type = interlace = None
+    idat = bytearray()
+    while pos + 8 <= len(data):
+        length = struct.unpack(">I", data[pos : pos + 4])[0]
+        tag = data[pos + 4 : pos + 8]
+        chunk = data[pos + 8 : pos + 8 + length]
+        pos += 12 + length
+        if tag == b"IHDR":
+            width, height, bit_depth, color_type, _c, _f, interlace = struct.unpack(">IIBBBBB", chunk[:13])
+        elif tag == b"IDAT":
+            idat += chunk
+        elif tag == b"IEND":
+            break
+    if width is None or bit_depth != 8 or color_type not in {2, 6} or interlace:
+        raise ValueError("unsupported png")
+    channels = 3 if color_type == 2 else 4
+    raw = zlib.decompress(bytes(idat))
+    stride = width * channels
+    rows: list[bytes] = []
+    index = 0
+    prev = bytearray(stride)
+    for _ in range(height):
+        filt = raw[index]
+        index += 1
+        scan = bytearray(raw[index : index + stride])
+        index += stride
+        if filt == 1:
+            for x in range(stride):
+                left = scan[x - channels] if x >= channels else 0
+                scan[x] = (scan[x] + left) & 255
+        elif filt == 2:
+            for x in range(stride):
+                scan[x] = (scan[x] + prev[x]) & 255
+        elif filt == 3:
+            for x in range(stride):
+                left = scan[x - channels] if x >= channels else 0
+                scan[x] = (scan[x] + ((left + prev[x]) // 2)) & 255
+        elif filt == 4:
+            for x in range(stride):
+                left = scan[x - channels] if x >= channels else 0
+                up = prev[x]
+                ul = prev[x - channels] if x >= channels else 0
+                scan[x] = (scan[x] + _png_paeth(left, up, ul)) & 255
+        elif filt != 0:
+            raise ValueError(f"png filter {filt}")
+        rows.append(bytes(scan))
+        prev = scan
+    return width, height, channels, b"".join(rows)
+
+
+def write_png(path: Path, width: int, height: int, channels: int, pixels: bytes) -> None:
+    color = 2 if channels == 3 else 6
+
+    def chunk(tag: bytes, payload: bytes) -> bytes:
+        crc = zlib.crc32(tag + payload) & 0xFFFFFFFF
+        return struct.pack(">I", len(payload)) + tag + payload + struct.pack(">I", crc)
+
+    raw = bytearray()
+    stride = width * channels
+    for y in range(height):
+        raw.append(0)
+        raw += pixels[y * stride : (y + 1) * stride]
+    Path(path).write_bytes(
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, color, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(bytes(raw), 9))
+        + chunk(b"IEND", b"")
+    )
+
+
+def vstack_pngs(paths: list[Path], dest: Path) -> None:
+    frames = [read_png(p) for p in paths]
+    width, _h0, channels, _p0 = frames[0]
+    if any(item[0] != width or item[2] != channels for item in frames):
+        raise ValueError("png stack mismatch")
+    height = sum(item[1] for item in frames)
+    write_png(dest, width, height, channels, b"".join(item[3] for item in frames))
+
+
+def pdf_page_count(path: Path) -> int:
+    raw = Path(path).read_bytes()
+    return len(re.findall(rb"/Type\s*/Page(?![sA-Za-z])", raw))
+
+
+def pdf_media_boxes(path: Path) -> list[tuple[float, float, float, float]]:
+    raw = Path(path).read_bytes()
+    boxes = []
+    for match in re.finditer(
+        rb"/MediaBox\s*\[\s*([0-9.\-]+)\s+([0-9.\-]+)\s+([0-9.\-]+)\s+([0-9.\-]+)\s*\]",
+        raw,
+    ):
+        boxes.append(tuple(float(part) for part in match.groups()))
+    return boxes
+
+
+def png_pixel_size(path: Path) -> tuple[int, int]:
+    raw = Path(path).read_bytes()
+    if raw[:8] != b"\x89PNG\r\n\x1a\n":
+        raise ValueError("not a png")
+    return struct.unpack(">II", raw[16:24])
+
+
+def write_single_image_pdf(
+    image: bytes,
+    width_px: int,
+    height_px: int,
+    dest: Path,
+    page_width_pt: float = 760.0,
+    filter_name: str = "DCTDecode",
+) -> None:
+    """One-page PDF. MediaBox follows the image, never a leftover Letter box."""
+    width_px = max(1, int(width_px))
+    height_px = max(1, int(height_px))
+    page_h = page_width_pt * height_px / width_px
+    page_w_s = f"{page_width_pt:.2f}".rstrip("0").rstrip(".")
+    page_h_s = f"{page_h:.2f}".rstrip("0").rstrip(".")
+    content = f"q\n{page_w_s} 0 0 {page_h_s} 0 0 cm\n/Im0 Do\nQ\n".encode("ascii")
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        (
+            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {page_w_s} {page_h_s}] "
+            f"/Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>"
+        ).encode("ascii"),
+        (
+            f"<< /Type /XObject /Subtype /Image /Width {width_px} /Height {height_px} "
+            f"/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /{filter_name} "
+            f"/Length {len(image)} >>"
+        ).encode("ascii"),
+        f"<< /Length {len(content)} >>".encode("ascii"),
+    ]
+    buf = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+    offsets = [0]
+    for index, body in enumerate(objects, start=1):
+        offsets.append(len(buf))
+        buf += f"{index} 0 obj\n".encode("ascii")
+        buf += body
+        if index == 4:
+            buf += b"\nstream\n"
+            buf += image
+            buf += b"\nendstream"
+        elif index == 5:
+            buf += b"\nstream\n"
+            buf += content
+            buf += b"endstream"
+        buf += b"\nendobj\n"
+    xref_at = len(buf)
+    buf += f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n".encode("ascii")
+    for offset in offsets[1:]:
+        buf += f"{offset:010d} 00000 n \n".encode("ascii")
+    buf += (
+        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\n"
+        f"startxref\n{xref_at}\n%%EOF\n"
+    ).encode("ascii")
+    dest.write_bytes(buf)
 
 
 def chrome_bin() -> str | None:

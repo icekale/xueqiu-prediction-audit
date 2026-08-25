@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import sys
 import unittest
+import tempfile
 from datetime import date
 from pathlib import Path
 from unittest import mock
@@ -324,6 +325,45 @@ class ScoreReportHelpersTests(unittest.TestCase):
 
     def test_registered_year_from_profile(self):
         self.assertEqual(core.registered_year_from_profile({"created_at": 1569513454659}), 2019)
+
+    def test_auto_briefs_cover_tables(self):
+        path = Path(__file__).resolve().parents[1] / "examples" / "metalslime_scorecard.json"
+        sc = json.loads(path.read_text(encoding="utf-8"))
+        briefs = core.auto_briefs(sc)
+        self.assertTrue(briefs["copy"])
+        self.assertTrue(briefs["year"])
+        self.assertTrue(briefs["theme"])
+        self.assertTrue(briefs["detail"])
+        self.assertNotIn("神准", briefs["copy"] + briefs["detail"])
+
+    def test_image_pdf_is_one_tall_page(self):
+        dest = Path(tempfile.mkdtemp()) / "page.pdf"
+        core.write_single_image_pdf(b"\xff\xd8\xff\xd9", 1520, 8704, dest)
+        boxes = core.pdf_media_boxes(dest)
+        self.assertEqual(core.pdf_page_count(dest), 1)
+        self.assertEqual(len(boxes), 1)
+        self.assertAlmostEqual(boxes[0][2], 760)
+        self.assertGreater(boxes[0][3], 4000)
+        self.assertNotIn(b"612", dest.read_bytes().split(b"/MediaBox", 1)[1][:40])
+
+    def test_png_roundtrip_and_vstack(self):
+        red = Path(tempfile.mkdtemp()) / "a.png"
+        blu = Path(tempfile.mkdtemp()) / "b.png"
+        out = Path(tempfile.mkdtemp()) / "c.png"
+        core.write_png(red, 2, 1, 3, bytes([255, 0, 0, 255, 0, 0]))
+        core.write_png(blu, 2, 1, 3, bytes([0, 0, 255, 0, 0, 255]))
+        w, h, ch, pix = core.read_png(red)
+        self.assertEqual((w, h, ch), (2, 1, 3))
+        self.assertEqual(pix[:3], bytes([255, 0, 0]))
+        core.vstack_pngs([red, blu], out)
+        w, h, ch, pix = core.read_png(out)
+        self.assertEqual((w, h, ch), (2, 2, 3))
+        self.assertEqual(pix[6:9], bytes([0, 0, 255]))
+
+    def test_clip_wraps_body(self):
+        html = core.inject_clip_css("<html><head></head><body><main class='sheet'>x</main></body></html>", 3600, 3600)
+        self.assertIn("xq-clip", html)
+        self.assertIn("top:-3600px", html)
 
 
 class CubeWindowTests(unittest.TestCase):
@@ -808,6 +848,12 @@ class BundleTests(unittest.TestCase):
         self.assertIn("药神公开预测审计", html)
         self.assertIn("14 / 16", html)
         self.assertIn("可证伪判断", html)
+        self.assertIn('class="brief"', html)
+        self.assertNotIn("size:A4", html)
+        self.assertNotIn("4000px", html)
+        long_html = core.apply_long_page_css(html, 4321)
+        self.assertIn("4321px", long_html)
+        self.assertNotIn("size:A4", long_html)
         self.assertIn("行为画像", html)
         self.assertNotIn("v1", html)
         self.assertNotIn("v2", html)

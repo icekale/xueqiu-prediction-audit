@@ -18,6 +18,7 @@
 | `registered` | 否 | 账号注册年，如 `2019`。报告抬头用「注册 2019 · 可证伪判断 2024–2026」 |
 | `conclusion` | 否 | 客户结论。不写则 `score` 用自动兜底，agent 应补 |
 | `playbook` | 否 | 三条跟单口径。不写则自动兜底 |
+| `briefs` | 否 | 表后分析：`copy` / `year` / `theme` / `price` / `detail`。不写则自动兜底 |
 
 根上不要写 `"draft": true`。那是 `draft` 命令的标记。
 

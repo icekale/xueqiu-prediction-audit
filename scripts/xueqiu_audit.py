@@ -361,6 +361,8 @@ def cmd_score(args: argparse.Namespace) -> int:
             payload["conclusion"] = prev["conclusion"]
         if prev.get("playbook") and not payload.get("playbook"):
             payload["playbook"] = prev["playbook"]
+        if prev.get("briefs") and not payload.get("briefs"):
+            payload["briefs"] = prev["briefs"]
     price_dir = Path(args.prices or "work/prices").expanduser()
     price_dir.mkdir(parents=True, exist_ok=True)
     work_dir = Path(args.calls).expanduser().parent
@@ -395,13 +397,8 @@ def cmd_score(args: argparse.Namespace) -> int:
     return 0
 
 
-def export_pdf_png(html_path: Path, dest: Path, png: bool) -> None:
-    chrome = core.chrome_bin()
-    if not chrome:
-        print("未找到 Chrome，只留下 HTML")
-        return
-    pdf = dest / (html_path.stem + ".pdf")
-    common = [
+def _chrome_common(chrome: str) -> list[str]:
+    return [
         chrome,
         "--headless=new",
         "--disable-gpu",
@@ -411,9 +408,46 @@ def export_pdf_png(html_path: Path, dest: Path, png: bool) -> None:
         "--timeout=18000",
         f"--user-data-dir={tempfile.mkdtemp(prefix='xq-audit-')}",
     ]
+
+
+def measure_html_height_px(html_path: Path, chrome: str) -> int:
+    raw = html_path.read_text(encoding="utf-8")
+    probe = Path(tempfile.mkdtemp(prefix="xq-audit-h-")) / "probe.html"
+    probe.write_text(core.inject_measure_script(raw), encoding="utf-8")
+    try:
+        proc = subprocess.run(
+            [
+                *_chrome_common(chrome),
+                "--window-size=760,2400",
+                "--dump-dom",
+                probe.resolve().as_uri(),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=20,
+            check=False,
+        )
+        dom = proc.stdout.decode("utf-8", "replace")
+        match = core.PAGE_HEIGHT_RE.search(dom)
+        if match:
+            return max(800, int(match.group(1)), core.estimate_html_height_px(raw))
+    except subprocess.TimeoutExpired:
+        pass
+    return core.estimate_html_height_px(raw)
+
+
+def export_long_pdf(chrome: str, html_path: Path, pdf: Path, height_px: int) -> None:
+    print_html = core.apply_long_page_css(html_path.read_text(encoding="utf-8"), height_px + 48)
+    print_path = Path(tempfile.mkdtemp(prefix="xq-audit-p-")) / "print.html"
+    print_path.write_text(print_html, encoding="utf-8")
     try:
         subprocess.run(
-            [*common, "--no-pdf-header-footer", f"--print-to-pdf={pdf}", html_path.resolve().as_uri()],
+            [
+                *_chrome_common(chrome),
+                "--no-pdf-header-footer",
+                f"--print-to-pdf={pdf}",
+                print_path.resolve().as_uri(),
+            ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             timeout=25,
@@ -421,32 +455,145 @@ def export_pdf_png(html_path: Path, dest: Path, png: bool) -> None:
         )
     except subprocess.TimeoutExpired:
         pass
+
+
+def png_to_long_pdf(png_path: Path, pdf: Path) -> bool:
+    """Embed the full PNG as one page. sips PDF keeps a Letter box and Preview crops."""
+    try:
+        width_px, height_px = core.png_pixel_size(png_path)
+    except ValueError:
+        return False
+    jpeg = Path(tempfile.mkdtemp(prefix="xq-audit-j-")) / "page.jpg"
+    try:
+        proc = subprocess.run(
+            [
+                "sips",
+                "-s",
+                "format",
+                "jpeg",
+                "-s",
+                "formatOptions",
+                "90",
+                str(png_path),
+                "--out",
+                str(jpeg),
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=20,
+            check=False,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return False
+    if proc.returncode != 0 or not jpeg.exists() or jpeg.stat().st_size < 100:
+        return False
+    core.write_single_image_pdf(jpeg.read_bytes(), width_px, height_px, pdf)
+    boxes = core.pdf_media_boxes(pdf) if pdf.exists() else []
+    return (
+        pdf.exists()
+        and pdf.stat().st_size > 1000
+        and core.pdf_page_count(pdf) == 1
+        and len(boxes) == 1
+        and boxes[0][3] >= 800
+    )
+
+
+SCREEN_SCALE = 2
+MAX_SHOT_CSS = 3600
+MAX_VIEW_CSS = 8000
+
+
+def _chrome_screenshot(chrome: str, html_path: Path, png_path: Path, window_h: int) -> bool:
+    try:
+        subprocess.run(
+            [
+                chrome,
+                "--headless",
+                "--disable-gpu",
+                "--no-first-run",
+                "--hide-scrollbars",
+                "--virtual-time-budget=8000",
+                "--timeout=35000",
+                f"--user-data-dir={tempfile.mkdtemp(prefix='xq-audit-')}",
+                f"--force-device-scale-factor={SCREEN_SCALE}",
+                f"--window-size=760,{max(800, int(window_h))}",
+                f"--screenshot={png_path}",
+                html_path.resolve().as_uri(),
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=40,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        pass
+    return png_path.exists() and png_path.stat().st_size > 1000
+
+
+def capture_full_png(chrome: str, html_path: Path, png_path: Path, height_px: int) -> bool:
+    want = max(1200, int(height_px) + 200)
+    if want <= MAX_VIEW_CSS and _chrome_screenshot(chrome, html_path, png_path, want):
+        try:
+            _w, got = core.png_pixel_size(png_path)
+        except ValueError:
+            got = 0
+        if got >= want * SCREEN_SCALE * 0.9:
+            return True
+    if want <= MAX_SHOT_CSS:
+        return False
+    tiles_dir = Path(tempfile.mkdtemp(prefix="xq-audit-t-"))
+    raw = html_path.read_text(encoding="utf-8")
+    tiles: list[Path] = []
+    offset = 0
+    while offset < want:
+        tile_h = min(MAX_SHOT_CSS, want - offset)
+        tile_html = tiles_dir / f"tile-{offset}.html"
+        tile_png = tiles_dir / f"tile-{offset}.png"
+        tile_html.write_text(core.inject_clip_css(raw, offset, tile_h), encoding="utf-8")
+        if not _chrome_screenshot(chrome, tile_html, tile_png, tile_h):
+            return False
+        width, height, channels, pixels = core.read_png(tile_png)
+        expect = int(tile_h) * SCREEN_SCALE
+        if height > expect:
+            core.write_png(tile_png, width, expect, channels, pixels[: expect * width * channels])
+        tiles.append(tile_png)
+        offset += tile_h
+    if not tiles:
+        return False
+    if len(tiles) == 1:
+        png_path.write_bytes(tiles[0].read_bytes())
+        return True
+    core.vstack_pngs(tiles, png_path)
+    return png_path.exists() and png_path.stat().st_size > 1000
+
+
+def export_pdf_png(html_path: Path, dest: Path, png: bool) -> None:
+    chrome = core.chrome_bin()
+    if not chrome:
+        print("未找到 Chrome，只留下 HTML")
+        return
+    pdf = dest / (html_path.stem + ".pdf")
+    png_path = dest / (html_path.stem + ".png")
+    height = measure_html_height_px(html_path, chrome)
+    if capture_full_png(chrome, html_path, png_path, height):
+        if png:
+            print("png", png_path, png_path.stat().st_size)
+        if png_to_long_pdf(png_path, pdf):
+            pages = core.pdf_page_count(pdf)
+            print("pdf", pdf, pdf.stat().st_size, f"pages={pages}")
+            return
+        if png:
+            print("png 已写出，PDF 嵌入失败，改试 Chrome 打印")
+    elif png:
+        print("png 未写出，HTML 仍可用")
+    export_long_pdf(chrome, html_path, pdf, height)
+    pages = core.pdf_page_count(pdf) if pdf.exists() else 0
     if pdf.exists() and pdf.stat().st_size > 1000:
-        print("pdf", pdf, pdf.stat().st_size)
+        print("pdf", pdf, pdf.stat().st_size, f"pages={pages or '?'}")
+        if pages != 1:
+            print("pdf 仍分页，请看 HTML / PNG")
     else:
         print("pdf 未写出（Chrome headless 有时会挂），HTML 仍可用")
-    if png:
-        png_path = dest / (html_path.stem + ".png")
-        try:
-            subprocess.run(
-                [
-                    *common,
-                    "--force-device-scale-factor=2",
-                    "--window-size=760,4000",
-                    f"--screenshot={png_path}",
-                    html_path.resolve().as_uri(),
-                ],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=25,
-                check=False,
-            )
-        except subprocess.TimeoutExpired:
-            pass
-        if png_path.exists() and png_path.stat().st_size > 1000:
-            print("png", png_path, png_path.stat().st_size)
-        else:
-            print("png 未写出，HTML 仍可用")
 
 
 def cmd_report(args: argparse.Namespace) -> int:

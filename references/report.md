@@ -4,7 +4,7 @@
 
 ## 版式
 
-- 宽度 720px 单栏，导出 PDF 用 A4。
+- 宽度 720px 单栏。导出 PDF 是按正文高度的**单页长页**，不要 A4 分页。
 - 字体：`-apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", sans-serif`
 - 字号：H1 24/30/590，H2 18/24，H3 16/22，正文 14/20，小字 12/16
 - 间距：段间 20，组内 8，标题下 6
@@ -32,10 +32,10 @@
   -webkit-print-color-adjust: exact;
   print-color-adjust: exact;
 }
-@page { size: A4; margin: 14mm 12mm; }
+@page { size: 760px <正文高度>px; margin: 0; }
 ```
 
-不要给整张大表加 `break-inside: avoid`（会裁切）。行可以避分。
+不要给整张大表加 `break-inside: avoid`（会裁切）。PDF 不分页，表头不要在每页重复。
 
 ## 结构
 
@@ -45,18 +45,18 @@
 4. **跟单口径**：三条。1 框架可参考、组合和情绪帖不能跟。2 最稳的空/多是什么、要接受什么回撤。3 数字价位和「现在可以买/卖」作废，举近端反例。
 5. **行为画像**：一句话主张 + 最多 5 条可核对习惯（每条带日期或计数），同一节里接 MBTI 四维对照。只写公开行为，不写星座 / 临床诊断。跨年不足 4 年必须标明「不是人格测写」。MBTI 必须标明不是量表。可用 `scorecard.persona` / `scorecard.mbti` 手写覆盖。提示词见 [persona.md](persona.md)。
 6. **表述对照**：后来怎么说 vs 当时怎么写。表头：类型 / 后来怎么说 / 当时怎么写 / 对照。禁止出现测谎、撒谎、骗子。可用 `scorecard.consistency` 覆盖，默认 `auto_consistency`。
-7. **照做与对照**：全部等权均值/中位 + 只做结构 + 只做战术 + 朴素对照表。
-8. **分年** + 命中率柱（中性灰紫，不要彩虹）。
-9. **分主题**。
-10. **价位与立场翻转**。
+7. **照做与对照**：全部等权均值/中位 + 只做结构 + 只做战术 + 朴素对照表。表后必须有 `briefs.copy`，不要只留数字。
+8. **分年** + 命中率柱（中性灰紫，不要彩虹）+ `briefs.year`。
+9. **分主题** + `briefs.theme`。
+10. **价位与立场翻转** + `briefs.price`。
 11. **窗口对、拿到现在不是一回事**（名创/大金这类回吐用三张卡片）。
-12. **明细表**：日期、向、类、判断、窗口、照做、至今。
+12. **明细表**：日期、向、类、判断、窗口、照做、至今。表后写 `briefs.detail`：最大正贡献、最拖累、回吐、近端未完成。
 13. **方法**：入选/排除/阈值/等权/非实盘/非投资建议。
 14. **页脚**：主页链接 · 语料规模（原创条数、长文数）。
 
 ## 导出
 
-Chrome headless。命令容易僵死，stdout 重定向，外层 timeout 20–25s。PDF 加 `--no-pdf-header-footer`。PNG 用 `--force-device-scale-factor=2`，再按白底裁掉底边空白。
+Chrome headless。命令容易僵死，stdout 重定向，外层 timeout 20–25s。HTML **不要**写死 `@page { size: 760px 4000px }`，否则截图和 PDF 都会在约 4000px 处裁明细表。先量 `main.sheet` 高度，再按块截图拼接（单次窗口不要超过约 3600px）。交付 PDF **用整张 PNG 嵌成单页**，MediaBox 跟图片走。不要 `sips -s format pdf`。Chrome `--print-to-pdf` 只作截图失败时的退路。
 
 暗色稿只留在编辑器侧栏预览。客户 PDF/PNG 一律浅色。
 
