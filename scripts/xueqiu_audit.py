@@ -53,6 +53,7 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
     print("  python3 scripts/xueqiu_audit.py fetch 2292705444")
     print("  python3 scripts/xueqiu_audit.py import-posts posts.json")
     print("  python3 scripts/xueqiu_audit.py draft work/2292705444/posts.json")
+    print("深语料：有 sidecar / 登录态再跑默认 fetch（deep），作者评论才会进 posts.json")
     return 0
 
 
@@ -259,9 +260,9 @@ def cmd_fetch(args: argparse.Namespace) -> int:
     print("再按 examples/inclusion.md 改成 calls.json，然后 score / report")
     print("组合量化：python3 scripts/xueqiu_audit.py cubes", uid, "--from-dir", dest)
     if manifest.get("coverage") == "thin":
-        print("覆盖：薄样本。深挖帖子+评论请用 --mode deep")
+        print("覆盖：薄样本。深挖帖子+评论请用 sidecar 后默认 fetch --mode deep")
     elif manifest.get("coverage") == "full":
-        print("覆盖：全原创时间线。要评论线程请用 --mode deep")
+        print("覆盖：全原创时间线，没有作者评论线程。有 sidecar 再跑默认 deep，问答里的首次表述才会进来。")
     elif manifest.get("coverage") == "deep":
         print("覆盖：全部时间线 + 问答 + 评论线程。draft 会扫大V自己的评论。")
     return 0 if manifest.get("posts") else 2
@@ -307,20 +308,26 @@ def cmd_prices(args: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
-def ensure_prices(payload: dict, price_dir: Path) -> None:
+def ensure_prices(payload: dict, price_dir: Path) -> list[str]:
     needed = []
     for call in payload.get("calls") or []:
         needed.append(call["symbol"])
         if (call.get("price_target") or {}).get("symbol"):
             needed.append(call["price_target"]["symbol"])
     cookie = core.read_cookie()
+    failed = []
     for sym in dict.fromkeys(needed):
         if (price_dir / f"{sym}.json").exists():
             continue
         print("fetch price", sym)
-        series, source = core.fetch_one_price(sym, cookie)
-        core.save_price(price_dir / f"{sym}.json", sym, source, series)
-        print(" ", source, "n=", len(series))
+        try:
+            series, source = core.fetch_one_price(sym, cookie)
+            core.save_price(price_dir / f"{sym}.json", sym, source, series)
+            print(" ", source, "n=", len(series))
+        except Exception as exc:
+            print(" ", "skip", exc)
+            failed.append(sym)
+    return failed
 
 
 def cmd_draft(args: argparse.Namespace) -> int:
@@ -344,27 +351,46 @@ def cmd_score(args: argparse.Namespace) -> int:
             print(" ", item, file=sys.stderr)
         print("字段见 references/calls.md，入选见 examples/inclusion.md", file=sys.stderr)
         return 2
+    dest = Path(args.out or "work/scorecard.json").expanduser()
+    if dest.exists():
+        try:
+            prev = json.loads(dest.read_text(encoding="utf-8"))
+        except Exception:
+            prev = {}
+        if prev.get("conclusion") and not payload.get("conclusion"):
+            payload["conclusion"] = prev["conclusion"]
+        if prev.get("playbook") and not payload.get("playbook"):
+            payload["playbook"] = prev["playbook"]
     price_dir = Path(args.prices or "work/prices").expanduser()
     price_dir.mkdir(parents=True, exist_ok=True)
+    work_dir = Path(args.calls).expanduser().parent
+    posts = core.load_sibling_posts(work_dir)
+    registered = payload.get("registered") or core.registered_year_from_profile_path(work_dir / "profile.json")
+    depth = core.infer_corpus_depth(work_dir, payload)
     if not args.no_fetch:
-        try:
-            ensure_prices(payload, price_dir)
-        except Exception as exc:
-            print("行情拉取失败：", exc, file=sys.stderr)
-            return 1
+        failed = ensure_prices(payload, price_dir)
+        if failed:
+            print("缺行情，这些标的先不打分：", ", ".join(failed))
     asof = core.parse_day(args.asof) if args.asof else None
-    try:
-        scorecard = core.score_calls(payload, price_dir, asof=asof)
-    except FileNotFoundError as exc:
-        print("缺少行情文件：", exc, file=sys.stderr)
-        print("先运行 python3 scripts/xueqiu_audit.py prices --calls", args.calls, file=sys.stderr)
-        return 1
-    dest = Path(args.out or "work/scorecard.json").expanduser()
+    scorecard = core.score_calls(
+        payload,
+        price_dir,
+        asof=asof,
+        posts=posts,
+        registered=registered,
+        corpus_depth=depth.get("depth") or None,
+    )
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(json.dumps(scorecard, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
     s = scorecard["summary"]
     print("n", s["n"], "dir", s["dir_window"])
     print("copy median/mean", s["copy_window_median"], s["copy_window_mean"])
+    if scorecard.get("unscored"):
+        print("unscored", len(scorecard["unscored"]), [row.get("symbol") for row in scorecard["unscored"]])
+    if scorecard.get("conclusion_source") == "auto":
+        print("结论是自动兜底。按 examples/inclusion.md 写 conclusion / playbook 后再 report。")
+    if depth.get("depth") == "posts_only":
+        print("语料是帖子全量，没有作者评论线程。有 sidecar 再跑 fetch --mode deep。")
     print("wrote", dest)
     return 0
 
@@ -434,12 +460,19 @@ def cmd_report(args: argparse.Namespace) -> int:
         posts = raw if isinstance(raw, list) else raw.get("posts") or raw.get("corpus")
         if not isinstance(posts, list):
             posts = None
+    work_dir = Path(args.scorecard).expanduser().parent
+    if not sc.get("registered"):
+        sc["registered"] = core.registered_year_from_profile_path(work_dir / "profile.json")
+    if not sc.get("corpus_depth"):
+        sc["corpus_depth"] = (core.infer_corpus_depth(work_dir, sc) or {}).get("depth") or ""
     if not sc.get("persona"):
         sc["persona"] = core.auto_persona(sc, posts)
     if not sc.get("consistency"):
         sc["consistency"] = core.auto_consistency(sc, posts)
     if not sc.get("mbti"):
         sc["mbti"] = core.auto_mbti(sc, posts)
+    if sc.get("conclusion_source") == "auto" and not sc.get("conclusion"):
+        print("结论仍是自动兜底。客户稿请按入选表手写 conclusion / playbook。")
     html_path.write_text(core.render_html(sc), encoding="utf-8")
     print("html", html_path)
     export_pdf_png(html_path, dest, png=args.png)

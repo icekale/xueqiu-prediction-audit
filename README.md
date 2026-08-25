@@ -4,12 +4,12 @@
 
 | 报告 | 回答什么 | 不回答什么 |
 | --- | --- | --- |
-| 预测审计 | 带日期、带多空的判断，事后方向 / 价位 / 照做各打多少 | 粉丝数、组合净值 |
+| 预测审计 | 带日期、带多空的判断，事后方向 / 价位 / 照做各打多少 | 粉丝数、组合净值、注册年等于生涯 |
 | 组合量化 | 公开组合相对基准的累计、年化、超额、财富倍数 | 实盘盈亏、能不能跟票 |
 
 这不是荐股框架，也不是某个博主的人格模拟。组合默认是模拟盘；作者写明「与实盘不重合」的，净值不当战绩，也**不**并进预测命中。
 
-**爬雪球不是门槛。** 离线样例零配置；新账号优先吃你已有的帖子；行情默认走东财/腾讯/新浪/Yahoo。
+**爬雪球不是门槛。** 离线样例零配置；新账号优先吃你已有的帖子；行情默认走东财/腾讯/新浪/Yahoo。Yahoo 429 会重试，仍失败就标未打分。
 
 English: [English](#english)
 
@@ -18,11 +18,13 @@ English: [English](#english)
 真正能对的，是带日期、带多空、能映射到流动标的的句子。本 skill 要求 agent：
 
 1. 先跑自带 CLI，不要手写爬虫。
-2. 同一论点只记首次清楚表述；翻案和数字价位另计。
-3. 结构（产业/周期）和战术（买卖点）分开打分。
-4. 照做用等权、同时报中位；并给出「一直拿住那条结构」的朴素对照。
-5. 公开组合另出量化表，不和命中率混成一句「准」。
-6. 客户稿用浅色系统黑体单栏；取数失败就降级为薄样本，不要卡死。
+2. `draft` 按**股票 / 方向 / 价格 / 时间**四元组扫候选。方向只认作者本句；价格必须挨着「目标 / 见底 / 过」；`@用户名` 不当数字。碎片评论可先 LLM 补候选，**不能**直接 `score`。
+3. 同一论点只记首次清楚表述；翻案和数字价位另计。大 V 自己的评论和主帖同等入选。
+4. 结构（产业/周期）和战术（买卖点）分开打分。方向对了不代表价位对。
+5. 照做用等权、同时报中位；并给出「一直拿住那条结构」的朴素对照。
+6. 公开组合另出量化表，不和命中率混成一句「准」。
+7. 客户稿第一行写清「注册 YYYY · 可证伪判断 YYYY–YYYY」。结论和跟单口径按入选表手写，自动稿只是兜底。跨年不够 4 年的判断不做人格侧写。
+8. 取数失败就降级为薄样本；只有帖子、没有作者评论线程时写明，有 sidecar 再跑默认 `deep`。不要为了取数去打站点防护。
 
 样例（雪球 metalslime / 药神，39 条预测 + 11 个组合，截止 2026-08-24）见 [`examples/metalslime.md`](examples/metalslime.md)。
 
@@ -102,18 +104,18 @@ https://xueqiu.com/u/2292705444
 # A. 已有导出
 python3 scripts/xueqiu_audit.py import-posts posts.json --out work/2292705444
 
-# B. V Push sidecar 或浏览器已登录雪球
+# B. V Push sidecar 或浏览器已登录雪球（默认 deep：帖子+问答+作者评论）
 export WAF_COOKIE_FILE=/path/to/waf_cookies.json
 python3 scripts/xueqiu_audit.py cookie --from-file waf_cookies.json
 python3 scripts/xueqiu_audit.py cookie
-python3 scripts/xueqiu_audit.py fetch 2292705444          # 默认 deep：帖子+评论；也接受主页 URL
-python3 scripts/xueqiu_audit.py fetch 2292705444 --mode full
+python3 scripts/xueqiu_audit.py fetch 2292705444
+python3 scripts/xueqiu_audit.py fetch 2292705444 --mode full          # 只要帖子
 python3 scripts/xueqiu_audit.py fetch 2292705444 --comment-posts 150
 
-# C. 扫候选 → 按 inclusion.md 改成 calls.json → 打分
+# C. 扫四元组 → 按 inclusion.md 改成 calls.json → 手写结论 → 打分
 python3 scripts/xueqiu_audit.py draft work/2292705444/posts.json --out work/2292705444/candidates.json
-python3 scripts/xueqiu_audit.py score work/2292705444/calls.json
-python3 scripts/xueqiu_audit.py report work/scorecard.json --out work/report
+python3 scripts/xueqiu_audit.py score work/2292705444/calls.json --out work/2292705444/scorecard.json
+python3 scripts/xueqiu_audit.py report work/2292705444/scorecard.json --out work/2292705444/report
 
 # D. 公开组合对基准（累计 / 年化 / 超额 / 财富倍数）
 python3 scripts/xueqiu_audit.py cubes --example
@@ -121,23 +123,15 @@ python3 scripts/xueqiu_audit.py cubes 2292705444 --from-dir work/2292705444
 python3 scripts/xueqiu_audit.py cubes --symbol ZH2001629 --from 2019-07-11 --to 2020-11-06
 ```
 
-`calls.json` 必填：`date` `side` `symbol` `horizon_m` `kind`。详见 [`references/calls.md`](references/calls.md)。入选批注见 [`examples/inclusion.md`](examples/inclusion.md)。
+`calls.json` 必填：`date` `side` `symbol` `horizon_m` `kind`。根上可写 `registered`、`conclusion`、`playbook`。详见 [`references/calls.md`](references/calls.md)。入选批注见 [`examples/inclusion.md`](examples/inclusion.md)。
 
-```bash
-python3 scripts/xueqiu_audit.py draft work/2292705444/posts.json --out work/2292705444/candidates.json
-```
-
-`draft` 扫股票 / 方向 / 价格 / 时间四元组，不能直接 `score`。碎片评论可先 LLM 补候选，仍须按 `examples/inclusion.md` 入选。V Push 时间线（`statuses` 数组或带 `statuses` 的对象）可直接 `import-posts`。
-
-行情不绑雪球：A 股前复权走东财 / 腾讯 / 新浪，美股港股走 Yahoo。只有这些都失败且你提供了登录态，才回退雪球日 K。
+`draft` 扫股票 / 方向 / 价格 / 时间，不能直接 `score`。`score` 会读旁边的 `posts.json`，缺美股行情会重试 Yahoo，仍没有就标未打分。V Push 时间线可直接 `import-posts`。只有帖子、没有评论文件时，报告会写「无作者评论线程」。
 
 Cookie 可放环境变量，不要写进仓库：
 
 ```bash
 export XUEQIU_COOKIE="..."
-# 或
 export XUEQIU_COOKIE_FILE="$HOME/.config/xueqiu-prediction-audit/cookie"
-# 已有 V Push waf-bot 时：
 export WAF_COOKIE_FILE="/data/waf_cookies.json"
 ```
 
@@ -172,6 +166,7 @@ xueqiu-prediction-audit/
 ├── references/scoring.md
 ├── references/calls.md
 ├── references/report.md
+├── references/persona.md
 ├── references/cli.md
 ├── examples/metalslime.md
 ├── examples/inclusion.md
@@ -188,6 +183,7 @@ xueqiu-prediction-audit/
 - 不要把组合净值写进标题战绩。
 - 不要对客户提内部版本号。
 - 不要把结果说成可跟盘的实盘信号。
+- 不要把行为画像或 MBTI 写成心理诊断，也不要把表述对照写成测谎。
 - 不要为了取数去绕过站点防护，也不要在本仓库启动 waf-bot solver。
 
 ---
@@ -198,10 +194,10 @@ xueqiu-prediction-audit/
 
 Two light-theme reports for Xueqiu (and similar) public influencers:
 
-- **Prediction audit:** dated, directional, falsifiable calls scored as **direction**, **price targets**, and **copy-trade P&amp;L**.
+- **Prediction audit:** dated, directional, falsifiable calls scored as **direction**, **price targets**, and **copy-trade P&amp;L**. `draft` extracts a four-tuple (stock / side / price / time) from the author's own sentence; mentions are not prices. The report header shows **registered year · scored-call span**, not career-from-signup.
 - **Cube quant:** public paper portfolios vs benchmarks — cumulative, annualized (only if ≥365 days), excess in percentage points, and wealth multiple `(1+cube)/(1+bench)`. Cube NAV never enters call scoring.
 
-Scraping is not the gate. Bundled CLI: `example` and `cubes --example` work offline; `draft` only proposes candidates (never score them raw); new accounts prefer a local post dump; prices default to East Money / Tencent / Sina / Yahoo. Use `--from`/`--to` to score a cube window instead of its full life.
+Scraping is not the gate. `example` and `cubes --example` work offline. `draft` only proposes candidates. `score` reads sibling `posts.json` for the public-text portrait, retries Yahoo on 429, and marks missing US/HK prices instead of failing. Default `fetch` is deep (posts + Q&amp;A + the influencer's own comments) when a V Push sidecar cookie is present. Write `conclusion` / `playbook` after scoring; autogen copy is a fallback. Not investment advice.
 
 ```bash
 git clone https://github.com/icekale/xueqiu-prediction-audit.git ~/.cursor/skills/xueqiu-prediction-audit
@@ -209,4 +205,4 @@ python3 ~/.cursor/skills/xueqiu-prediction-audit/scripts/xueqiu_audit.py example
 python3 ~/.cursor/skills/xueqiu-prediction-audit/scripts/xueqiu_audit.py cubes --example
 ```
 
-Author: [Kale](https://github.com/icekale). Independent / [V Push](https://vpush.net). MIT. Not investment advice.
+Author: [Kale](https://github.com/icekale). Independent / [V Push](https://vpush.net). MIT.

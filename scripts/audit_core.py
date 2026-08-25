@@ -761,13 +761,17 @@ def post_day(post: dict) -> date | None:
 STOCK_TICKER_RE = re.compile(r"\$([^$()]+)\(([A-Za-z]{1,5}\d{0,6})\)\$")
 STOCK_BARE_RE = re.compile(r"\$([A-Z]{1,5})\$")
 REPLY_SPLIT_RE = re.compile(r"（回复 @[^：:]{1,40}[：:]")
+XQ_QUOTE_RE = re.compile(r"//\s*@")
+REPLY_PREFIX_RE = re.compile(r"^回复\s*@[^：:\s]{1,40}\s*[：:]\s*")
+MENTION_RE = re.compile(r"@[\w.\-一-龥]{1,40}")
+PRICE_CUE_RE = re.compile(r"目标价|目标|见底|见顶|过")
 PRICE_RANGE_RE = re.compile(
     r"(?<![\d.])(\d{3,5}(?:\.\d{1,2})?)\s*[-~～—－–−到至]\s*(\d{3,5}(?:\.\d{1,2})?)(?![\d.%％])"
 )
 PRICE_LABELED_RE = re.compile(
-    r"(?:目标价|目标价位|见底|见顶|点位|价位|看)\s*(\d{3,5}(?:\.\d{1,2})?)(?![\d.%％])"
+    r"(?:目标价|目标|见底|见顶)\s*(\d{3,5}(?:\.\d{1,2})?)(?![\d.%％])"
 )
-INDEX_LEVEL_RE = re.compile(r"(?:过|上|突破|站上|守住)\s*(\d{4})(?!\d)")
+INDEX_LEVEL_RE = re.compile(r"(?:过|突破|站上|守住)\s*(\d{4})(?!\d)")
 HORIZON_RULES = (
     (re.compile(r"五年|5年"), 60, "五年"),
     (re.compile(r"三年|3年"), 36, "三年"),
@@ -811,20 +815,30 @@ SHORT_HINTS = (
     "不是底",
     "现在可以卖",
     "维持看空",
-    "见顶",
+    "双见顶",
+    "预计见顶",
     "还会有回调",
-    "清仓",
-    "减仓离场",
+    "应该清仓",
+    "全部清仓",
+    "现在清仓",
 )
-TACTICAL_HINTS = ("现在可以", "拒绝抄底", "见底", "见顶", "梭回", "点位", "开仓", "清仓")
+TACTICAL_HINTS = ("现在可以", "拒绝抄底", "见底", "预计见顶", "梭回", "点位", "开仓", "全部清仓", "现在清仓")
 MOOD_HINTS = ("今天心情", "这周看着难受", "今天好难受")
 FRAME_HINTS = ("IRR", "供需", "去金融化")
 CUBE_HINTS = ("不构成方向判断", "组合调仓")
 
 
-def _first_hit(text: str, keys: tuple[str, ...]) -> str | None:
+def _first_hit(text: str, keys: tuple[str, ...], honor_negation: bool = False) -> str | None:
+    text = text or ""
     for key in keys:
-        if key in text:
+        start = 0
+        while True:
+            pos = text.find(key, start)
+            if pos < 0:
+                break
+            if honor_negation and any(token in text[max(0, pos - 8) : pos] for token in ("没", "未", "不", "别", "勿")):
+                start = pos + len(key)
+                continue
             return key
     return None
 
@@ -840,6 +854,18 @@ def split_reply_context(text: str, parent_text: str = "") -> tuple[str, str]:
             parent = tail[:-1].strip() if tail.endswith("）") else tail.strip()
         return body, parent
     return text.strip(), parent
+
+
+def author_body(text: str, parent_text: str = "") -> tuple[str, str]:
+    body, parent = split_reply_context(text, parent_text)
+    if XQ_QUOTE_RE.search(body):
+        body = XQ_QUOTE_RE.split(body, maxsplit=1)[0].strip()
+    body = REPLY_PREFIX_RE.sub("", body).strip()
+    return body, parent
+
+
+def mask_mentions(text: str) -> str:
+    return MENTION_RE.sub(" ", text or "")
 
 
 def guess_horizon(text: str, kind: str) -> int:
@@ -860,10 +886,16 @@ def _looks_like_year(value: float) -> bool:
     return 1990 <= value <= 2035 and float(value).is_integer()
 
 
+def _near_price_cue(text: str, start: int) -> bool:
+    return bool(PRICE_CUE_RE.search(text[max(0, start - 16) : start + 2]))
+
+
 def extract_price_target(text: str, symbol: str = "") -> dict | None:
-    text = text or ""
-    for lo_s, hi_s in PRICE_RANGE_RE.findall(text):
-        lo, hi = float(lo_s), float(hi_s)
+    text = mask_mentions(text or "")
+    for match in PRICE_RANGE_RE.finditer(text):
+        if not _near_price_cue(text, match.start()):
+            continue
+        lo, hi = float(match.group(1)), float(match.group(2))
         if _looks_like_year(lo) and _looks_like_year(hi):
             continue
         if hi < lo:
@@ -874,22 +906,24 @@ def extract_price_target(text: str, symbol: str = "") -> dict | None:
             "symbol": symbol,
             "lo": int(lo) if lo.is_integer() else lo,
             "hi": int(hi) if hi.is_integer() else hi,
-            "label": f"{lo_s}-{hi_s}",
+            "label": f"{match.group(1)}-{match.group(2)}",
         }
-    for raw in PRICE_LABELED_RE.findall(text):
-        value = float(raw)
+    for match in PRICE_LABELED_RE.finditer(text):
+        value = float(match.group(1))
         if _looks_like_year(value):
             continue
+        raw = match.group(1)
         return {
             "symbol": symbol,
             "lo": int(value) if value.is_integer() else value,
             "hi": int(value) if value.is_integer() else value,
             "label": raw,
         }
-    for raw in INDEX_LEVEL_RE.findall(text):
-        value = float(raw)
+    for match in INDEX_LEVEL_RE.finditer(text):
+        value = float(match.group(1))
         if _looks_like_year(value):
             continue
+        raw = match.group(1)
         return {
             "symbol": symbol,
             "lo": int(value),
@@ -930,10 +964,10 @@ def extract_symbols(text: str) -> list[tuple[str, str]]:
 
 
 def extract_quad(text: str, parent_text: str = "") -> dict:
-    body, parent = split_reply_context(text, parent_text)
-    cube = bool(_first_hit(body, CUBE_HINTS) or _first_hit(parent, CUBE_HINTS))
-    long_hit = _first_hit(body, LONG_HINTS)
-    short_hit = _first_hit(body, SHORT_HINTS)
+    body, parent = author_body(text, parent_text)
+    cube = bool(_first_hit(body, CUBE_HINTS))
+    long_hit = _first_hit(body, LONG_HINTS, honor_negation=True)
+    short_hit = _first_hit(body, SHORT_HINTS, honor_negation=True)
     side = None
     if short_hit and not long_hit:
         side = -1
@@ -942,12 +976,8 @@ def extract_quad(text: str, parent_text: str = "") -> dict:
     elif short_hit and long_hit:
         side = -1 if body.rfind(short_hit) > body.rfind(long_hit) else 1
     symbols = extract_symbols(body) or extract_symbols(parent)
-    price = extract_price_target(body, symbols[0][0] if symbols else "") or extract_price_target(
-        parent, symbols[0][0] if symbols else ""
-    )
+    price = extract_price_target(body, symbols[0][0] if symbols else "")
     horizon_m, horizon_hit = extract_horizon(body)
-    if horizon_m is None:
-        horizon_m, horizon_hit = extract_horizon(parent)
     kind = "tactical" if _first_hit(body, TACTICAL_HINTS) or price or (horizon_m or 99) <= 3 else "structure"
     if horizon_m is None:
         horizon_m = 6 if kind == "tactical" else 12
@@ -1207,7 +1237,7 @@ def yahoo_ticker(symbol: str) -> str:
     return s
 
 
-def fetch_yahoo(symbol: str) -> list[tuple]:
+def _fetch_yahoo_once(symbol: str) -> list[tuple]:
     ticker = urllib.parse.quote(yahoo_ticker(symbol), safe="^.")
     url = (
         f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
@@ -1233,6 +1263,20 @@ def fetch_yahoo(symbol: str) -> list[tuple]:
     if not out:
         raise RuntimeError("empty_yahoo")
     return to_series(out)
+
+
+def fetch_yahoo(symbol: str, attempts: int = 3) -> list[tuple]:
+    last: Exception | None = None
+    for i in range(max(1, attempts)):
+        try:
+            return _fetch_yahoo_once(symbol)
+        except urllib.error.HTTPError as exc:
+            last = exc
+            if exc.code in {429, 502, 503} and i < attempts - 1:
+                time.sleep(1.5 * (2 ** i))
+                continue
+            raise
+    raise last or RuntimeError("empty_yahoo")
 
 
 def fetch_xueqiu_kline(symbol: str, cookie: str, begin: str = "20180101") -> list[tuple]:
@@ -1442,7 +1486,118 @@ def bucket(rows: list[dict], key: str) -> dict:
     return out
 
 
-def score_calls(payload: dict, price_dir: Path, asof: date | None = None) -> dict:
+def call_span(rows: list) -> str:
+    years = _row_years(rows)
+    if not years:
+        return ""
+    lo, hi = min(years), max(years)
+    return str(lo) if lo == hi else f"{lo}–{hi}"
+
+
+def coverage_kicker(sc: dict) -> str:
+    parts = []
+    registered = sc.get("registered")
+    if registered:
+        parts.append(f"注册 {registered}")
+    span = sc.get("call_span") or call_span(sc.get("rows") or [])
+    if span:
+        parts.append(f"可证伪判断 {span}")
+    depth = sc.get("corpus_depth")
+    if depth == "posts_only":
+        parts.append("帖子全量，无作者评论线程")
+    elif depth == "thin":
+        parts.append("薄样本")
+    elif depth == "deep":
+        parts.append("含作者评论")
+    return " · ".join(parts)
+
+
+def load_sibling_posts(work_dir: Path) -> list | None:
+    path = Path(work_dir) / "posts.json"
+    if not path.exists():
+        return None
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(raw, list):
+        return raw
+    posts = raw.get("posts") or raw.get("corpus")
+    return posts if isinstance(posts, list) else None
+
+
+def registered_year_from_profile(profile: dict | None) -> int | None:
+    if not isinstance(profile, dict):
+        return None
+    user = profile.get("user") if isinstance(profile.get("user"), dict) else profile
+    for key in ("created_at", "created"):
+        ts = user.get(key)
+        if isinstance(ts, str) and ts.isdigit():
+            ts = int(ts)
+        if isinstance(ts, (int, float)) and ts > 0:
+            if ts > 1e12:
+                ts = ts / 1000
+            try:
+                return datetime.fromtimestamp(ts, TZ).year
+            except Exception:
+                return None
+    raw = user.get("created_str") or profile.get("registered")
+    if raw:
+        text = str(raw)
+        if len(text) >= 4 and text[:4].isdigit():
+            return int(text[:4])
+    return None
+
+
+def registered_year_from_profile_path(path: Path) -> int | None:
+    dest = Path(path)
+    if not dest.exists():
+        return None
+    try:
+        return registered_year_from_profile(json.loads(dest.read_text(encoding="utf-8")))
+    except Exception:
+        return None
+
+
+def infer_corpus_depth(work_dir: Path, payload: dict | None = None) -> dict:
+    info = {"depth": "", "author_comments": 0, "has_comments_file": False}
+    dest = Path(work_dir)
+    comments = dest / "comments.json"
+    manifest_path = dest / "manifest.json"
+    if comments.exists():
+        info["has_comments_file"] = True
+        try:
+            data = json.loads(comments.read_text(encoding="utf-8"))
+        except Exception:
+            data = []
+        rows = data if isinstance(data, list) else (data.get("comments") or [])
+        info["author_comments"] = sum(1 for row in rows if isinstance(row, dict) and row.get("is_author"))
+        info["depth"] = "deep" if info["author_comments"] else "posts_only"
+        return info
+    if manifest_path.exists():
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except Exception:
+            manifest = {}
+        sources = [str(item) for item in (manifest.get("sources") or [])]
+        coverage = str(manifest.get("coverage") or "")
+        if coverage == "thin" or any("rss" in item for item in sources):
+            info["depth"] = "thin"
+        elif coverage == "deep" or any("comment" in item for item in sources):
+            info["depth"] = "deep"
+        elif coverage in {"full", "vpush-full"} or sources:
+            info["depth"] = "posts_only"
+        return info
+    if (payload or {}).get("coverage") == "thin":
+        info["depth"] = "thin"
+    return info
+
+
+def score_calls(
+    payload: dict,
+    price_dir: Path,
+    asof: date | None = None,
+    posts: list | None = None,
+    registered: int | None = None,
+    corpus_depth: str | None = None,
+) -> dict:
     problems = validate_calls(payload)
     if problems:
         raise ValueError("；".join(problems[:8]))
@@ -1461,13 +1616,21 @@ def score_calls(payload: dict, price_dir: Path, asof: date | None = None) -> dic
         return cache[sym]
 
     rows = []
-    missing = []
+    unscored = []
     for call in calls:
         sym = call["symbol"]
         try:
             stats = window_stats(series(sym), parse_day(call["date"]), float(call["horizon_m"]), asof)
         except FileNotFoundError:
-            missing.append(sym)
+            unscored.append(
+                {
+                    "id": call.get("id"),
+                    "date": call.get("date"),
+                    "symbol": sym,
+                    "theme": call.get("theme"),
+                    "reason": "missing_price",
+                }
+            )
             continue
         wret = (stats or {}).get("window", {}).get("ret")
         tret = (stats or {}).get("todate", {}).get("ret")
@@ -1510,8 +1673,6 @@ def score_calls(payload: dict, price_dir: Path, asof: date | None = None) -> dic
                 "stats": stats,
             }
         )
-    if missing:
-        raise FileNotFoundError("缺少行情: " + ", ".join(dict.fromkeys(missing)))
 
     struct = [r for r in rows if r.get("kind") == "structure"]
     tact = [r for r in rows if r.get("kind") == "tactical"]
@@ -1563,6 +1724,10 @@ def score_calls(payload: dict, price_dir: Path, asof: date | None = None) -> dic
         "price_basis": payload.get("price_basis") or "前复权收盘",
         "corpus": payload.get("corpus") or "",
         "coverage": payload.get("coverage") or "scored",
+        "registered": registered or payload.get("registered"),
+        "call_span": call_span(rows),
+        "corpus_depth": corpus_depth or payload.get("corpus_depth") or "",
+        "unscored": unscored,
         "rules": {
             "include": "有日期、有明确多空、能对流动标的；同一论点只取首次清楚表述，翻案或新价位另计",
             "exclude": "段子、复述、当天情绪、纯框架无方向",
@@ -1573,9 +1738,19 @@ def score_calls(payload: dict, price_dir: Path, asof: date | None = None) -> dic
         "baselines": baselines,
         "rows": rows,
     }
-    scored["persona"] = auto_persona(scored)
-    scored["consistency"] = auto_consistency(scored)
-    scored["mbti"] = auto_mbti(scored)
+    if payload.get("conclusion"):
+        scored["conclusion"] = payload["conclusion"]
+        scored["conclusion_source"] = "author"
+    else:
+        scored["conclusion_source"] = "auto"
+    if payload.get("playbook"):
+        scored["playbook"] = payload["playbook"]
+        scored["playbook_source"] = "author"
+    else:
+        scored["playbook_source"] = "auto"
+    scored["persona"] = auto_persona(scored, posts)
+    scored["consistency"] = auto_consistency(scored, posts)
+    scored["mbti"] = auto_mbti(scored, posts)
     return scored
 
 
@@ -2175,14 +2350,18 @@ def render_html(sc: dict) -> str:
         f"<p>窗口 {pct(r.get('copy_window'))}。至今 {pct(r.get('copy_todate'))}。高点回撤 {pct(r.get('giveback'))}。</p></div>"
         for r in cards
     )
+    kicker = coverage_kicker(sc)
+    unscored_n = len(sc.get("unscored") or [])
     meta = " · ".join(
         x
         for x in [
             html.escape(sc.get("account") or "") + (f"（UID {html.escape(uid)}）" if uid else ""),
+            html.escape(kicker) if kicker else "",
             f"{sc.get('n')} 条可证伪方向",
+            f"{unscored_n} 条缺行情未打分" if unscored_n else "",
             f"价格截止 {html.escape(str(sc.get('asof') or ''))}",
             html.escape(sc.get("price_basis") or ""),
-            "薄样本" if sc.get("coverage") == "thin" else "",
+            "薄样本" if sc.get("coverage") == "thin" and "薄样本" not in kicker else "",
         ]
         if x and x not in {"（UID ）"}
     )

@@ -104,4 +104,6 @@ python3 scripts/xueqiu_audit.py draft work/UID/posts.json --out work/UID/candida
 python3 scripts/xueqiu_audit.py score work/UID/calls.json
 ```
 
-`score` 碰到 `"draft": true` 会拒绝。
+`score` 碰到 `"draft": true` 会拒绝。打完分后把结论和三条跟单口径写进 `calls.json` / `scorecard.json` 的 `conclusion`、`playbook`，不要直接把自动稿交给客户。
+
+`draft` 只认作者本句；被 `// @` 引用的别人多空、`@137-137-137` 这种用户名、没有「目标 / 见底 / 过」的光秃数字，都不当候选。

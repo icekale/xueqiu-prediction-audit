@@ -174,6 +174,157 @@ class DraftTests(unittest.TestCase):
         self.assertIn("价位另判", row["note"])
         self.assertTrue(row["draft"])
 
+    def test_draft_ignores_quoted_reply_and_mention_prices(self):
+        payload = core.draft_candidates(
+            [
+                {
+                    "id": "noise-mention",
+                    "created_str": "2026-08-15",
+                    "text": "回复 @137-137-137 : 希望你知行合一// @137-137-137 :回复 @Syedc :s姐，我未来是这么计",
+                },
+                {
+                    "id": "noise-recap",
+                    "created_str": "2026-07-17",
+                    "text": "市场即使这么跌，也比我1月底2月初清仓的位置高不少",
+                },
+                {
+                    "id": "keep-author",
+                    "created_str": "2026-02-07",
+                    "text": "回复 @一姬 : 我的观点是看空 $甲骨文(ORCL)$ // @一姬 : [该内容现已无法查看]",
+                },
+            ]
+        )
+        ids = [c["id"] for c in payload["calls"]]
+        self.assertNotIn("noise-mention", ids)
+        self.assertNotIn("noise-recap", ids)
+        self.assertEqual(ids, ["keep-author"])
+        self.assertEqual(payload["calls"][0]["symbol"], "ORCL")
+        self.assertEqual(payload["calls"][0]["side"], -1)
+        self.assertIsNone(payload["calls"][0].get("price_target"))
+
+    def test_price_needs_cue_and_skips_mention_digits(self):
+        mention = core.extract_price_target("回复 @137-137-137 : 希望你知行合一")
+        self.assertIsNone(mention)
+        bare = core.extract_price_target("今天看到 1350-1400 就心情好")
+        self.assertIsNone(bare)
+        moutai = core.extract_price_target("见底时茅台 1350-1400")
+        self.assertEqual(moutai["lo"], 1350)
+        self.assertEqual(moutai["hi"], 1400)
+
+
+class ScoreReportHelpersTests(unittest.TestCase):
+    def test_coverage_kicker_uses_registered_and_call_span(self):
+        line = core.coverage_kicker(
+            {
+                "registered": 2019,
+                "rows": [{"date": "2024-02-05"}, {"date": "2026-08-19"}],
+            }
+        )
+        self.assertEqual(line, "注册 2019 · 可证伪判断 2024–2026")
+
+    def test_score_skips_missing_price_instead_of_failing(self):
+        import tempfile
+
+        payload = {
+            "title": "缺行情",
+            "asof": "2026-08-25",
+            "calls": [
+                {
+                    "id": "ok",
+                    "date": "2024-02-05",
+                    "side": 1,
+                    "symbol": "SH000300",
+                    "horizon_m": 12,
+                    "kind": "tactical",
+                    "theme": "看多沪深300",
+                },
+                {
+                    "id": "orcl",
+                    "date": "2026-02-07",
+                    "side": -1,
+                    "symbol": "ORCL",
+                    "horizon_m": 6,
+                    "kind": "tactical",
+                    "theme": "看空甲骨文",
+                },
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            price_dir = Path(tmp)
+            core.save_price(
+                price_dir / "SH000300.json",
+                "SH000300",
+                "test",
+                [
+                    (date(2024, 2, 5), 100, 101, 99, 100),
+                    (date(2025, 2, 5), 120, 121, 119, 120),
+                    (date(2026, 8, 25), 130, 131, 129, 130),
+                ],
+            )
+            scored = core.score_calls(payload, price_dir)
+        self.assertEqual(scored["n"], 1)
+        self.assertEqual([r["id"] for r in scored["rows"]], ["ok"])
+        self.assertEqual(scored["unscored"][0]["symbol"], "ORCL")
+        self.assertEqual(scored["unscored"][0]["reason"], "missing_price")
+
+    def test_score_uses_posts_for_mbti(self):
+        import tempfile
+
+        payload = {
+            "asof": "2026-08-25",
+            "coverage": "full",
+            "calls": [
+                {
+                    "id": f"c{i}",
+                    "date": f"202{4 + i // 4}-0{1 + i % 4}-05",
+                    "side": 1,
+                    "symbol": "SH000300",
+                    "horizon_m": 12,
+                    "kind": "tactical" if i % 2 else "structure",
+                    "theme": "看多沪深300",
+                }
+                for i in range(8)
+            ],
+        }
+        posts = [{"text": "回复 @球友 : 老登又来对线"}] * 12
+        with tempfile.TemporaryDirectory() as tmp:
+            price_dir = Path(tmp)
+            core.save_price(
+                price_dir / "SH000300.json",
+                "SH000300",
+                "test",
+                [
+                    (date(2024, 1, 5), 100, 101, 99, 100),
+                    (date(2026, 8, 25), 130, 131, 129, 130),
+                ],
+            )
+            scored = core.score_calls(payload, price_dir, posts=posts)
+        self.assertEqual(scored["mbti"]["type"][0], "E")
+        self.assertEqual(scored["conclusion_source"], "auto")
+
+    def test_render_header_shows_span_and_posts_only(self):
+        path = Path(__file__).resolve().parents[1] / "examples" / "metalslime_scorecard.json"
+        sc = json.loads(path.read_text(encoding="utf-8"))
+        sc["registered"] = 2019
+        sc["corpus_depth"] = "posts_only"
+        html = core.render_html(sc)
+        self.assertIn("注册 2019", html)
+        self.assertIn("可证伪判断", html)
+        self.assertIn("无作者评论线程", html)
+
+    def test_yahoo_retries_on_429(self):
+        import io
+        import urllib.error
+
+        err = urllib.error.HTTPError("https://example", 429, "Too Many Requests", hdrs=None, fp=io.BytesIO())
+        series = [(date(2024, 1, 2), 1, 2, 0.5, 1)]
+        with mock.patch.object(core, "_fetch_yahoo_once", side_effect=[err, series]):
+            with mock.patch.object(core.time, "sleep"):
+                self.assertEqual(core.fetch_yahoo("ORCL"), series)
+
+    def test_registered_year_from_profile(self):
+        self.assertEqual(core.registered_year_from_profile({"created_at": 1569513454659}), 2019)
+
 
 class CubeWindowTests(unittest.TestCase):
     def test_custom_window_uses_overlap(self):
@@ -656,6 +807,7 @@ class BundleTests(unittest.TestCase):
         html = core.render_html(sc)
         self.assertIn("药神公开预测审计", html)
         self.assertIn("14 / 16", html)
+        self.assertIn("可证伪判断", html)
         self.assertIn("行为画像", html)
         self.assertNotIn("v1", html)
         self.assertNotIn("v2", html)

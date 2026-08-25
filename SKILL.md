@@ -28,7 +28,7 @@ python3 scripts/xueqiu_audit.py cubes --example
 3. 本机浏览器已登录雪球 → `cookie` 然后 `fetch UID`
 4. 都没有 → `fetch` 走公开 RSS；仍失败就请用户登录、给 sidecar，或导出，同时用长文/已贴文本做薄样本
 5. `draft posts.json` 出四元组候选（股票 / 方向 / 价格 / 时间）。碎片评论可先 LLM 补候选，再按 [examples/inclusion.md](examples/inclusion.md) 改成 `calls.json`（这步是判断；禁止把草稿或 LLM 候选直接 score）
-6. `score`（缺行情自动拉东财/腾讯/新浪/Yahoo）→ `report`
+6. `score`（缺行情自动拉东财/腾讯/新浪/Yahoo；美股港股 Yahoo 会重试，仍失败就标未打分，不要为了取数去打防护）。`score` 会读旁边的 `posts.json` / `profile.json`。按 [examples/inclusion.md](examples/inclusion.md) **手写** `conclusion` / `playbook`，脚本自动稿只是兜底 → `report`
 7. 组合量化：`cubes UID` 或 `cubes --from-dir work/UID`；要比某一段而不是全寿命时加 `--from` `--to`
 
 禁止打 WAF、禁止写绕过、禁止在本仓库启动 solver / jsdom、禁止打印 cookie。waf-bot 只当已运行 sidecar 的 cookie 来源。详情见 [references/cli.md](references/cli.md)。
@@ -66,7 +66,7 @@ horizon 用作者自己写的期限。「五年」= 60 个月。
 
 ## 客户报告
 
-浅色、系统黑体、单栏。结论和跟单口径最前，接着是行为画像（习惯 + MBTI 对照），再是表述对照。交付 PDF 用浅色。禁止 v1/v2、米色宋体、红绿灯。`report` 以 HTML 为完成标准；Chrome 僵死不算失败。行为画像必须带证据。MBTI 写在行为画像里，只能做公开文本对照，必须标明不是量表。禁止星座、临床诊断。跨年不够 4 年不要升级成人格侧写。对照后来怎么说和当时怎么写，章节名不要叫测谎。
+浅色、系统黑体、单栏。第一行写清「注册 YYYY · 可证伪判断 YYYY–YYYY」，不要按注册年装成生涯审计。帖子全量但没有作者评论时写「无作者评论线程」。结论和跟单口径最前，必须按入选表手写，自动稿只是兜底。接着是行为画像（习惯 + MBTI 对照），再是表述对照。交付 PDF 用浅色。禁止 v1/v2、米色宋体、红绿灯。`report` 以 HTML 为完成标准；Chrome 僵死不算失败。行为画像必须带证据。MBTI 写在行为画像里，只能做公开文本对照，必须标明不是量表。禁止星座、临床诊断。跨年不够 4 年不要升级成人格侧写。对照后来怎么说和当时怎么写，章节名不要叫测谎。
 
 ## 组合量化
 

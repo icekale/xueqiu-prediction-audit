@@ -61,9 +61,11 @@ python3 scripts/xueqiu_audit.py score work/UID/calls.json --out work/UID/scoreca
 python3 scripts/xueqiu_audit.py report work/UID/scorecard.json --out work/UID/report
 ```
 
-`score` 会拒绝 `"draft": true`。不要把候选文件当终稿。
+`score` 会拒绝 `"draft": true`。不要把候选文件当终稿。`draft` 只认作者本句的多空，价格必须挨着「目标 / 见底 / 过」，`@用户名` 不当数字。
 
-`score` 缺行情时自动拉：A 股走东财 / 腾讯 / 新浪前复权，美股港股走 Yahoo；有 cookie 时才用雪球日 K。不要依赖雪球行情当唯一源。
+`score` 会读 `calls.json` 旁边的 `posts.json` 和 `profile.json`，用来写行为画像 / MBTI 和「注册年 · 可证伪判断跨年」。缺行情时自动拉：A 股走东财 / 腾讯 / 新浪前复权，美股港股走 Yahoo（429 会重试）；仍失败就标未打分，不要为了取数去打防护。有 cookie 时才用雪球日 K。
+
+打完分后按入选表手写 `scorecard.conclusion` / `playbook`（或写在 `calls.json` 根上）。自动跟单口径只是兜底。语料若是帖子全量、没有 `comments.json`，有 sidecar 再跑默认 `fetch --mode deep`。
 
 Chrome 在的话会尝试 PDF/PNG。headless 有时僵死，**HTML 才是完成标准**。
 
