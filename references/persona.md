@@ -2,6 +2,8 @@
 
 客户报告里可以写公开习惯，MBTI 对照写在行为画像同一节，**不能**写测谎仪、骗子、临床诊断、星座。侧写提示词在下面；代码默认 `auto_persona` + `auto_mbti` + `auto_consistency`，也可用 `scorecard.persona` / `scorecard.mbti` / `scorecard.consistency` 手写覆盖。
 
+更完整的公开文本画像（一句话、重心、标签、可单独出稿）走 `profile`，见 [ai_profile.md](ai_profile.md)。`report` 若旁边有 `ai_profile.json` 会先嵌这一段，再用本页的行为画像 / MBTI / 表述对照。
+
 画像和对照**不进入**命中或照做加权。
 
 ## 门槛

@@ -5,7 +5,8 @@
 ```bash
 cd /path/to/xueqiu-prediction-audit
 python3 scripts/xueqiu_audit.py doctor
-python3 scripts/xueqiu_audit.py example          # 零配置：预测样例 + 组合样例
+python3 scripts/xueqiu_audit.py example          # 零配置：预测样例 + 画像 + 组合样例
+python3 scripts/xueqiu_audit.py profile --example
 python3 scripts/xueqiu_audit.py cubes --example  # 只出组合量化
 ```
 
@@ -65,9 +66,22 @@ python3 scripts/xueqiu_audit.py report work/UID/scorecard.json --out work/UID/re
 
 `score` 会读 `calls.json` 旁边的 `posts.json` 和 `profile.json`，用来写行为画像 / MBTI 和「注册年 · 可证伪判断跨年」。缺行情时自动拉：A 股走东财 / 腾讯 / 新浪前复权，美股港股走 Yahoo（429 会重试）；仍失败就标未打分，不要为了取数去打防护。有 cookie 时才用雪球日 K。
 
+## 公开文本画像
+
+只要画像、或不想等计分表：
+
+```bash
+python3 scripts/xueqiu_audit.py profile work/UID
+python3 scripts/xueqiu_audit.py profile 2292705444 --mode deep
+python3 scripts/xueqiu_audit.py profile work/UID --render          # 手写覆盖后重出
+python3 scripts/xueqiu_audit.py profile work/UID --with-report     # 合并进审计稿
+```
+
+默认**不要**调外部模型：脚本只出抽样包，**当前 agent 按 [ai_profile.md](ai_profile.md) 写 `ai_profile.json`**，再 `--render`。用户点名要用 API 时才加 `--llm`。`report` 会读旁边的 `ai_profile.json`。客户画像拷到 `/Volumes/main/{账号}/{账号}-公开画像-YYYYMMDD`。不要问。画像不进命中加权。
+
 打完分后按入选表手写 `scorecard.conclusion` / `playbook`（或写在 `calls.json` 根上）。自动跟单口径只是兜底。语料若是帖子全量、没有 `comments.json`，有 sidecar 再跑默认 `fetch --mode deep`。
 
-Chrome 在的话会尝试 PDF/PNG。headless 有时僵死，**HTML 才是完成标准**。
+Chrome 在的话会尝试 PDF/PNG。headless 有时僵死，**HTML 才是完成标准**。客户稿（非 `example`）写完自动拷到 `/Volumes/main/{账号}/{账号}-预测审计-YYYYMMDD.{html,pdf,png}`，组合稿用「组合量化」，画像用「公开画像」。不要问。卷没挂载会打印 `main skipped`。
 
 ## 组合量化
 

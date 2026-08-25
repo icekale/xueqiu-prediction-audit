@@ -1,13 +1,13 @@
 ---
 name: xueqiu-prediction-audit
-description: Use when auditing a Xueqiu or similar public influencer's stock predictions, scoring directional calls, copy-trade P&L, quantifying public cubes against benchmarks, producing a client prediction-audit PDF/PNG, or deeply fetching Xueqiu posts plus the influencer's own comments with a V Push / waf-bot sidecar cookie. Triggers include 预测审计, 命中率, 跟单, 雪球 KOL, 药神, metalslime, 公开预测, 组合量化, 超额收益, 雪球组合, vpush, waf-bot, 评论.
+description: Use when auditing a Xueqiu or similar public influencer's stock predictions, scoring directional calls, copy-trade P&L, quantifying public cubes against benchmarks, producing a public-text AI profile, producing a client prediction-audit PDF/PNG, or deeply fetching Xueqiu posts plus the influencer's own comments with a V Push / waf-bot sidecar cookie. Triggers include 预测审计, 命中率, 跟单, 雪球 KOL, 药神, metalslime, 公开预测, 组合量化, 超额收益, 雪球组合, AI画像, 用户画像, vpush, waf-bot, 评论.
 ---
 
 # 公开预测审计
 
 把大 V 的**公开、可证伪、带日期的方向判断**对行情打分。客户要的是跟单口径，不是粉丝数。公开组合另做净值对基准（累计 / 年化 / 超额 / 财富倍数），**不**并进命中加权。
 
-**REQUIRED:** 读完本文件再动手。计分见 [references/scoring.md](references/scoring.md)，字段见 [references/calls.md](references/calls.md)，入选批注见 [examples/inclusion.md](examples/inclusion.md)，版式见 [references/report.md](references/report.md)，侧写提示词见 [references/persona.md](references/persona.md)，命令见 [references/cli.md](references/cli.md)。样例见 [examples/metalslime.md](examples/metalslime.md)。
+**REQUIRED:** 读完本文件再动手。计分见 [references/scoring.md](references/scoring.md)，字段见 [references/calls.md](references/calls.md)，入选批注见 [examples/inclusion.md](examples/inclusion.md)，版式见 [references/report.md](references/report.md)，侧写提示词见 [references/persona.md](references/persona.md)，AI 画像见 [references/ai_profile.md](references/ai_profile.md)，命令见 [references/cli.md](references/cli.md)。样例见 [examples/metalslime.md](examples/metalslime.md)。
 
 不是投资建议。不要模仿被审计对象的口吻去荐股。
 
@@ -18,6 +18,7 @@ description: Use when auditing a Xueqiu or similar public influencer's stock pre
 ```bash
 python3 scripts/xueqiu_audit.py doctor
 python3 scripts/xueqiu_audit.py example
+python3 scripts/xueqiu_audit.py profile --example
 python3 scripts/xueqiu_audit.py cubes --example
 ```
 
@@ -27,9 +28,10 @@ python3 scripts/xueqiu_audit.py cubes --example
 2. 已有 V Push waf-bot sidecar → `export WAF_COOKIE_FILE=.../waf_cookies.json` 或 `cookie --from-file waf_cookies.json`，再 `fetch UID`（默认 deep：全部时间线 + 问答 + 评论线程；UID 可以是主页链接）
 3. 本机浏览器已登录雪球 → `cookie` 然后 `fetch UID`
 4. 都没有 → `fetch` 走公开 RSS；仍失败就请用户登录、给 sidecar，或导出，同时用长文/已贴文本做薄样本
-5. `draft posts.json` 出四元组候选（股票 / 方向 / 价格 / 时间）。碎片评论可先 LLM 补候选，再按 [examples/inclusion.md](examples/inclusion.md) 改成 `calls.json`（这步是判断；禁止把草稿或 LLM 候选直接 score）
-6. `score`（缺行情自动拉东财/腾讯/新浪/Yahoo；美股港股 Yahoo 会重试，仍失败就标未打分，不要为了取数去打防护）。`score` 会读旁边的 `posts.json` / `profile.json`。按 [examples/inclusion.md](examples/inclusion.md) **手写** `conclusion` / `playbook`，并对照做表、分年、分主题、价位、明细各写一段 `briefs`（只看表不够）。脚本自动稿只是兜底 → `report`
-7. 组合量化：`cubes UID` 或 `cubes --from-dir work/UID`；要比某一段而不是全寿命时加 `--from` `--to`
+5. 公开文本画像（可单独交差，审计时默认一起出）：`profile work/UID` 只负责抽样包。**agent 自己当分析器**：读 `ai_profile_pack.json` 和 [references/ai_profile.md](references/ai_profile.md)，写 `ai_profile.json`（`source=agent`），再 `--render`。和手写 `conclusion` 一样，不要为了画像去调外部 API；用户明确说要用模型时才加 `--llm`。客户画像拷到 `/Volumes/main/{账号}/{账号}-公开画像-YYYYMMDD.{html,pdf,png}`，不要问。
+6. `draft posts.json` 出四元组候选（股票 / 方向 / 价格 / 时间）。碎片评论可先 LLM 补候选，再按 [examples/inclusion.md](examples/inclusion.md) 改成 `calls.json`（这步是判断；禁止把草稿或 LLM 候选直接 score）
+7. `score`（缺行情自动拉东财/腾讯/新浪/Yahoo；美股港股 Yahoo 会重试，仍失败就标未打分，不要为了取数去打防护）。`score` 会读旁边的 `posts.json` / `profile.json`。按 [examples/inclusion.md](examples/inclusion.md) **手写** `conclusion` / `playbook`，并对照做表、分年、分主题、价位、明细各写一段 `briefs`（只看表不够）。脚本自动稿只是兜底 → `report`。`report` 会读旁边的 `ai_profile.json` 嵌进审计稿。报告一出就拷到 `/Volumes/main/{账号}/{账号}-预测审计-YYYYMMDD.{html,pdf,png}`，**不要问**。卷没挂载写一句跳过。
+8. 组合量化：`cubes UID` 或 `cubes --from-dir work/UID`；要比某一段而不是全寿命时加 `--from` `--to`。客户组合稿同样拷到 `/Volumes/main/{账号}/{账号}-组合量化-YYYYMMDD.{html,pdf,png}`，不要问。
 
 禁止打 WAF、禁止写绕过、禁止在本仓库启动 solver / jsdom、禁止打印 cookie。waf-bot 只当已运行 sidecar 的 cookie 来源。详情见 [references/cli.md](references/cli.md)。
 
@@ -66,7 +68,7 @@ horizon 用作者自己写的期限。「五年」= 60 个月。
 
 ## 客户报告
 
-浅色、系统黑体、单栏。第一行写清「注册 YYYY · 可证伪判断 YYYY–YYYY」，不要按注册年装成生涯审计。帖子全量但没有作者评论时写「无作者评论线程」。结论和跟单口径最前，必须按入选表手写，自动稿只是兜底。接着是行为画像（习惯 + MBTI 对照），再是表述对照。交付 PDF 用浅色**长页**，不要 A4 分页，也不要写死 4000px 页高。禁止 v1/v2、米色宋体、红绿灯。`report` 以 HTML 为完成标准；Chrome 僵死不算失败。行为画像必须带证据。MBTI 写在行为画像里，只能做公开文本对照，必须标明不是量表。禁止星座、临床诊断。跨年不够 4 年不要升级成人格侧写。对照后来怎么说和当时怎么写，章节名不要叫测谎。
+浅色、系统黑体、单栏。第一行写清「注册 YYYY · 可证伪判断 YYYY–YYYY」，不要按注册年装成生涯审计。帖子全量但没有作者评论时写「无作者评论线程」。结论和跟单口径最前，必须按入选表手写，自动稿只是兜底。有 `ai_profile.json` 就在跟单口径后嵌公开文本画像，再是行为画像（习惯 + MBTI 对照）和表述对照。交付 PDF 用浅色**长页**，不要 A4 分页，也不要写死 4000px 页高。禁止 v1/v2、米色宋体、红绿灯。`report` 以 HTML 为完成标准；Chrome 僵死不算失败。客户 html/pdf/png **默认**落到 `/Volumes/main/{账号}/`，文件名 `{账号}-预测审计-YYYYMMDD`；组合同理用「组合量化」，画像用「公开画像」。不要等用户再说「拷到 main」。离线 `example` 不拷。行为画像必须带证据。MBTI 写在行为画像里，只能做公开文本对照，必须标明不是量表。禁止星座、临床诊断。跨年不够 4 年不要升级成人格侧写。对照后来怎么说和当时怎么写，章节名不要叫测谎。
 
 ## 组合量化
 
@@ -86,8 +88,9 @@ horizon 用作者自己写的期限。「五年」= 60 个月。
 - 禁止对客户提内部版本号。
 - 禁止在聊天、日志、仓库里出现 cookie / `xq_a_token`。
 - 禁止输出买卖指令。结尾写「不是投资建议」。
-- 禁止把行为画像或 MBTI 写成心理诊断、星座或正规量表。跨年不够不要写成人格侧写。
+- 禁止把行为画像、AI 画像或 MBTI 写成心理诊断、星座或正规量表。跨年不够不要写成人格侧写。画像不进入命中加权。
 - 禁止把表述对照写成测谎、撒谎或骗子。
 - 禁止为了取数去打站点防护。
+- 客户报告写完必须拷到 `/Volumes/main/{账号}/`，禁止再问要不要放。卷不在就跳过并说一声。
 
-触发语：「审计这个雪球账号准不准」「帮我看药神能不能跟」「出一份预测审计给客户」「量化这个大 V 的组合超额」。
+触发语：「审计这个雪球账号准不准」「帮我看药神能不能跟」「出一份预测审计给客户」「量化这个大 V 的组合超额」「给这个雪球账号做 AI 画像」。

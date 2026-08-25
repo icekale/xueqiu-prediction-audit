@@ -28,6 +28,7 @@ UA = (
 )
 CONFIG_DIR = Path.home() / ".config" / "xueqiu-prediction-audit"
 COOKIE_PATH = CONFIG_DIR / "cookie"
+CLIENT_DELIVER_ROOT = Path("/Volumes/main")
 TLS = ssl.create_default_context()
 
 # East Money kline: date,open,close,high,low,...
@@ -42,6 +43,46 @@ def config_dir() -> Path:
     except OSError:
         pass
     return CONFIG_DIR
+
+
+def client_deliver_stem(account: str, asof: str, kind: str = "预测审计") -> str:
+    day = re.sub(r"\D", "", str(asof or ""))[:8]
+    return f"{account}-{kind}-{day}"
+
+
+def should_deliver_client(src_dir: Path, account: str, example: bool = False) -> bool:
+    if example or not str(account or "").strip():
+        return False
+    return "example" not in Path(src_dir).parts
+
+
+def deliver_client_artifacts(
+    src_dir: Path,
+    account: str,
+    asof: str,
+    kind: str = "预测审计",
+    root: Path | None = None,
+    example: bool = False,
+    src_stem: str = "report",
+) -> list[Path]:
+    """Copy html/pdf/png to /Volumes/main/{account}/. Skip example and unmounted volume."""
+    if not should_deliver_client(src_dir, account, example):
+        return []
+    dest_root = Path(root) if root is not None else CLIENT_DELIVER_ROOT
+    if not dest_root.is_dir():
+        return []
+    folder = dest_root / str(account).strip()
+    folder.mkdir(parents=True, exist_ok=True)
+    stem = client_deliver_stem(account, asof, kind)
+    copied: list[Path] = []
+    for ext in ("html", "pdf", "png"):
+        src = Path(src_dir) / f"{src_stem}.{ext}"
+        if not src.is_file():
+            continue
+        dest = folder / f"{stem}.{ext}"
+        dest.write_bytes(src.read_bytes())
+        copied.append(dest)
+    return copied
 
 
 def cookie_status(cookie: str) -> str:
@@ -2405,6 +2446,11 @@ def render_html(sc: dict) -> str:
         f'<p class="small">{html.escape(mbti.get("note") or "这是公开发帖和计分表的 MBTI 风格对照，不是量表，也不是心理诊断。")}</p>'
         "</div>"
     )
+    ai_html = ""
+    if sc.get("ai_profile"):
+        from ai_profile import embed_html as embed_ai_profile
+
+        ai_html = embed_ai_profile(sc["ai_profile"])
     consist_rows = [
         [i.get("kind") or "", i.get("claim") or "", i.get("record") or "", i.get("verdict") or ""]
         for i in consistency.get("items") or []
@@ -2520,6 +2566,7 @@ def render_html(sc: dict) -> str:
     <div class="stat"><b>{hit_pt} / {len(pts)}</b><span>数字价位打中</span></div>
   </div>
   <div class="stack"><h2>跟单口径</h2>{pills}</div>
+  {ai_html}
   {persona_html}
   {consist_html}
   <div class="stack">

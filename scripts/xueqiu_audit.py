@@ -44,14 +44,22 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
         except ImportError:
             extras.append(f"{name}=no")
     print("optional", " ".join(extras))
+    try:
+        import ai_profile as aip
+
+        print("llm", aip.llm_status())
+    except Exception:
+        print("llm", "none")
     print()
     print("下一步（任选一条）：")
     print("  python3 scripts/xueqiu_audit.py example")
     print("  python3 scripts/xueqiu_audit.py cubes --example")
+    print("  python3 scripts/xueqiu_audit.py profile --example")
     print("  python3 scripts/xueqiu_audit.py cookie")
     print("  python3 scripts/xueqiu_audit.py cookie --from-file waf_cookies.json")
     print("  python3 scripts/xueqiu_audit.py fetch 2292705444")
     print("  python3 scripts/xueqiu_audit.py import-posts posts.json")
+    print("  python3 scripts/xueqiu_audit.py profile work/2292705444")
     print("  python3 scripts/xueqiu_audit.py draft work/2292705444/posts.json")
     print("深语料：有 sidecar / 登录态再跑默认 fetch（deep），作者评论才会进 posts.json")
     return 0
@@ -256,8 +264,8 @@ def cmd_fetch(args: argparse.Namespace) -> int:
 
     (dest / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     print("out", dest)
-    print("下一步：python3 scripts/xueqiu_audit.py draft", dest / "posts.json")
-    print("再按 examples/inclusion.md 改成 calls.json，然后 score / report")
+    print("下一步：python3 scripts/xueqiu_audit.py profile", dest)
+    print("或 draft", dest / "posts.json", "再按 examples/inclusion.md 改成 calls.json，然后 score / report")
     print("组合量化：python3 scripts/xueqiu_audit.py cubes", uid, "--from-dir", dest)
     if manifest.get("coverage") == "thin":
         print("覆盖：薄样本。深挖帖子+评论请用 sidecar 后默认 fetch --mode deep")
@@ -618,20 +626,47 @@ def cmd_report(args: argparse.Namespace) -> int:
         sc["consistency"] = core.auto_consistency(sc, posts)
     if not sc.get("mbti"):
         sc["mbti"] = core.auto_mbti(sc, posts)
+    ai_path = work_dir / "ai_profile.json"
+    if ai_path.exists() and not sc.get("ai_profile"):
+        import ai_profile as aip
+
+        ai = aip.load_ai_profile(ai_path)
+        if ai:
+            sc = aip.merge_into_scorecard(sc, ai)
     if sc.get("conclusion_source") == "auto" and not sc.get("conclusion"):
         print("结论仍是自动兜底。客户稿请按入选表手写 conclusion / playbook。")
     html_path.write_text(core.render_html(sc), encoding="utf-8")
     print("html", html_path)
     export_pdf_png(html_path, dest, png=args.png)
+    _deliver_main(dest, sc.get("account") or "", sc.get("asof") or "", "预测审计", "report")
     return 0
 
 
-def write_cube_report(payload: dict, dest: Path, png: bool) -> Path:
+def _deliver_main(src_dir: Path, account: str, asof: str, kind: str, src_stem: str, example: bool = False) -> None:
+    copied = core.deliver_client_artifacts(
+        src_dir, account, asof, kind=kind, example=example, src_stem=src_stem
+    )
+    if copied:
+        print("main", copied[0].parent)
+        return
+    if core.should_deliver_client(src_dir, account, example) and not core.CLIENT_DELIVER_ROOT.is_dir():
+        print("main skipped: /Volumes/main 未挂载")
+
+
+def write_cube_report(payload: dict, dest: Path, png: bool, example: bool = False) -> Path:
     dest.mkdir(parents=True, exist_ok=True)
     html_path = dest / "cubes.html"
     html_path.write_text(core.render_cubes_html(payload), encoding="utf-8")
     print("html", html_path)
     export_pdf_png(html_path, dest, png=png)
+    _deliver_main(
+        dest,
+        payload.get("account") or "",
+        str(payload.get("asof") or ""),
+        "组合量化",
+        "cubes",
+        example=example,
+    )
     return html_path
 
 
@@ -643,7 +678,7 @@ def cmd_cubes(args: argparse.Namespace) -> int:
         (dest / "cubes_scorecard.json").write_text(
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
         )
-        write_cube_report(payload, dest, png=True)
+        write_cube_report(payload, dest, png=True, example=True)
         print("这是离线组合样例，净值不进预测命中。")
         return 0
 
@@ -747,10 +782,139 @@ def cmd_cubes(args: argparse.Namespace) -> int:
     return 0 if payload.get("usable") else 2
 
 
+def _write_profile_report(profile: dict, pack: dict, dest: Path, png: bool, example: bool = False) -> Path:
+    import ai_profile as aip
+
+    dest.mkdir(parents=True, exist_ok=True)
+    html_path = dest / "profile.html"
+    html_path.write_text(aip.render_html(profile, pack), encoding="utf-8")
+    print("html", html_path)
+    export_pdf_png(html_path, dest, png=png)
+    _deliver_main(
+        dest,
+        profile.get("account") or "",
+        str(profile.get("asof") or pack.get("asof") or ""),
+        "公开画像",
+        "profile",
+        example=example,
+    )
+    return html_path
+
+
+def cmd_profile(args: argparse.Namespace) -> int:
+    import ai_profile as aip
+
+    if args.example:
+        dest = out_dir(args.out, "work/example")
+        sc = json.loads((ROOT / "examples" / "metalslime_scorecard.json").read_text(encoding="utf-8"))
+        pack = aip.build_pack(scorecard=sc, posts=[], comments=[], mode="deep")
+        profile = aip.normalize_ai_profile(
+            json.loads((ROOT / "examples" / "metalslime_ai_profile.json").read_text(encoding="utf-8")),
+            pack,
+        )
+        profile["source"] = "agent"
+        (dest / "ai_profile_pack.json").write_text(
+            json.dumps(pack, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        (dest / "ai_profile.json").write_text(
+            json.dumps(profile, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        _write_profile_report(profile, pack, dest / "profile", png=True, example=True)
+        print("这是离线画像样例，不进入预测命中。")
+        return 0
+
+    if not args.target:
+        print("用法：python3 scripts/xueqiu_audit.py profile work/UID  或  profile --example", file=sys.stderr)
+        return 2
+    try:
+        work = aip.resolve_work_dir(args.target, ROOT)
+    except ValueError:
+        print("无法识别目标。请用 work/UID、UID 或 https://xueqiu.com/u/数字", file=sys.stderr)
+        return 2
+    if not work.is_dir():
+        print("目录不存在：", work, file=sys.stderr)
+        print("先 fetch / import-posts，或 profile --example", file=sys.stderr)
+        return 2
+
+    posts = aip.load_posts(work)
+    comments = aip.load_comments(work)
+    scorecard = aip.load_scorecard(work)
+    if not posts and not scorecard:
+        print("没有 posts.json 也没有 scorecard.json。先 fetch / import-posts / score。", file=sys.stderr)
+        return 2
+
+    mode = args.mode or ("deep" if scorecard else "fast")
+    pack = aip.build_pack(work, posts=posts, comments=comments, scorecard=scorecard, mode=mode)
+    pack_path = work / "ai_profile_pack.json"
+    pack_path.write_text(json.dumps(pack, ensure_ascii=False, indent=2), encoding="utf-8")
+    print("pack", pack.get("counts", {}).get("sampled"), "items", pack_path)
+
+    existing = aip.load_ai_profile(work / "ai_profile.json")
+    if args.render:
+        if not existing:
+            print("没有 ai_profile.json。先跑 profile，或按 references/ai_profile.md 手写。", file=sys.stderr)
+            return 2
+        profile = aip.normalize_ai_profile(existing, pack)
+        if existing.get("source") in {"agent", "llm"}:
+            profile["source"] = existing["source"]
+    elif existing and not args.force:
+        profile = aip.normalize_ai_profile(existing, pack)
+        if existing.get("source") in {"agent", "llm"}:
+            profile["source"] = existing["source"]
+        print("reuse", work / "ai_profile.json", "source", profile.get("source"))
+    else:
+        profile = aip.generate_ai_profile(
+            pack,
+            scorecard=scorecard,
+            posts=posts,
+            use_llm=bool(args.llm),
+            goal=args.goal or "",
+        )
+        if profile.pop("llm_error", None):
+            print("llm failed, fallback rules")
+
+    dest_json = work / "ai_profile.json"
+    dest_json.write_text(json.dumps(profile, ensure_ascii=False, indent=2), encoding="utf-8")
+    print("source", profile.get("source"), dest_json)
+    if profile.get("source") == "rules":
+        print("占位规则稿。agent 按 references/ai_profile.md 读", pack_path, "写", dest_json, "（source=agent），再 --render。")
+        print("不要为了画像去找外部 API。加 --llm 才调 OpenAI 兼容接口。")
+
+    out = Path(args.out).expanduser() if args.out else work / "profile"
+    _write_profile_report(profile, pack, out, png=args.png, example=False)
+
+    if args.with_report:
+        if not scorecard:
+            print("没有 scorecard.json，跳过 --with-report。先 score。", file=sys.stderr)
+            return 0
+        merged = aip.merge_into_scorecard(scorecard, profile)
+        (work / "scorecard.json").write_text(
+            json.dumps(merged, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
+        )
+        report_ns = argparse.Namespace(
+            scorecard=str(work / "scorecard.json"),
+            out=str(work / "report"),
+            png=args.png,
+        )
+        return cmd_report(report_ns)
+    return 0
+
+
 def cmd_example(args: argparse.Namespace) -> int:
     bundled = ROOT / "examples" / "metalslime_scorecard.json"
     dest = out_dir(args.out, "work/example")
     sc = json.loads(bundled.read_text(encoding="utf-8"))
+    ai_path = ROOT / "examples" / "metalslime_ai_profile.json"
+    if ai_path.exists():
+        import ai_profile as aip
+
+        pack = aip.build_pack(scorecard=sc, posts=[], comments=[], mode="deep")
+        profile = aip.normalize_ai_profile(json.loads(ai_path.read_text(encoding="utf-8")), pack)
+        sc = aip.merge_into_scorecard(sc, profile)
+        (dest / "ai_profile.json").write_text(
+            json.dumps(profile, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        _write_profile_report(profile, pack, dest / "profile", png=True, example=True)
     sc["conclusion"] = (
         "长周期产业判断准，短线买卖点和数字价位不准。"
         "16 条结构里 14 条窗口方向对；23 条战术里 7 条对，照做中位 −4%。"
@@ -768,13 +932,13 @@ def cmd_example(args: argparse.Namespace) -> int:
     print("html", html_path)
     export_pdf_png(html_path, dest, png=True)
     cubes = json.loads((ROOT / "examples" / "metalslime_cubes.json").read_text(encoding="utf-8"))
-    write_cube_report(cubes, dest, png=True)
-    print("这是离线样例，不需要雪球登录。审计新账号请 fetch 或 import-posts。组合量化见 cubes.html。")
+    write_cube_report(cubes, dest, png=True, example=True)
+    print("这是离线样例，不需要雪球登录。审计新账号请 fetch 或 import-posts。组合量化见 cubes.html。公开画像见 profile/profile.html。")
     return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="公开预测审计：取数 / 行情 / 打分 / 组合量化 / 浅色报告")
+    p = argparse.ArgumentParser(description="公开预测审计：取数 / 行情 / 打分 / 画像 / 组合量化 / 浅色报告")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("doctor", help="检查 Python、cookie、Chrome")
@@ -824,6 +988,19 @@ def build_parser() -> argparse.ArgumentParser:
     e = sub.add_parser("example", help="离线复刻药神样例报告，零配置")
     e.add_argument("--out", default="work/example")
 
+    pf = sub.add_parser("profile", help="公开文本 AI 画像，可单独出，也可和审计报告一起出")
+    pf.add_argument("target", nargs="?", help="work/UID、UID 或主页链接")
+    pf.add_argument("--example", action="store_true", help="离线复刻药神画像样例")
+    pf.add_argument("--mode", choices=("fast", "deep"), help="fast=近期为主；deep=拉开历史，有 scorecard 时默认 deep")
+    pf.add_argument("--out", help="画像 HTML 目录，默认 work/UID/profile")
+    pf.add_argument("--goal", default="", help="自定义观察重点，不能覆盖安全边界")
+    pf.add_argument("--llm", action="store_true", help="调用外部 OpenAI 兼容接口；默认由 agent 写终稿")
+    pf.add_argument("--no-llm", action="store_true", help=argparse.SUPPRESS)
+    pf.add_argument("--force", action="store_true", help="忽略已有 ai_profile.json，重新生成")
+    pf.add_argument("--render", action="store_true", help="只渲染已有 ai_profile.json")
+    pf.add_argument("--with-report", action="store_true", help="有 scorecard 时合并进审计报告")
+    pf.add_argument("--png", action="store_true")
+
     cu = sub.add_parser("cubes", help="组合净值对基准：累计 / 年化 / 超额 / 财富倍数")
     cu.add_argument("uid", nargs="?", help="雪球 UID，如 2292705444")
     cu.add_argument("--symbol", help="逗号分隔 ZH 代码，如 ZH2001629")
@@ -850,6 +1027,7 @@ def main(argv: list[str] | None = None) -> int:
         "score": cmd_score,
         "report": cmd_report,
         "example": cmd_example,
+        "profile": cmd_profile,
         "cubes": cmd_cubes,
     }[args.cmd]
     return fn(args)

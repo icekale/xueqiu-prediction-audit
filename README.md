@@ -1,10 +1,11 @@
 # 公开预测审计 Skill
 
-把雪球（及同类平台）大 V 的**公开发言**和**公开组合**做成可复核的两张浅色报告：
+把雪球（及同类平台）大 V 的**公开发言**和**公开组合**做成可复核的浅色报告：
 
 | 报告 | 回答什么 | 不回答什么 |
 | --- | --- | --- |
 | 预测审计 | 带日期、带多空的判断，事后方向 / 价位 / 照做各打多少 | 粉丝数、组合净值、注册年等于生涯 |
+| 公开画像 | 公开文本里反复出现的重心、习惯、投资表达速览 | 心理诊断、诈骗概率、能不能跟 |
 | 组合量化 | 公开组合相对基准的累计、年化、超额、财富倍数 | 实盘盈亏、能不能跟票 |
 
 这不是荐股框架，也不是某个博主的人格模拟。组合默认是模拟盘；作者写明「与实盘不重合」的，净值不当战绩，也**不**并进预测命中。
@@ -74,6 +75,7 @@ git clone https://github.com/icekale/xueqiu-prediction-audit.git ~/.claude/skill
 cd ~/.cursor/skills/xueqiu-prediction-audit
 python3 scripts/xueqiu_audit.py doctor
 python3 scripts/xueqiu_audit.py example
+python3 scripts/xueqiu_audit.py profile --example
 python3 scripts/xueqiu_audit.py cubes --example
 ```
 
@@ -90,6 +92,12 @@ python3 scripts/xueqiu_audit.py cubes --example
 ```text
 用公开预测审计 skill，审计这个雪球账号：
 https://xueqiu.com/u/2292705444
+```
+
+或只要公开文本画像：
+
+```text
+给这个雪球账号做一份 AI 画像
 ```
 
 或只要组合量化：
@@ -112,12 +120,17 @@ python3 scripts/xueqiu_audit.py fetch 2292705444
 python3 scripts/xueqiu_audit.py fetch 2292705444 --mode full          # 只要帖子
 python3 scripts/xueqiu_audit.py fetch 2292705444 --comment-posts 150
 
-# C. 扫四元组 → 按 inclusion.md 改成 calls.json → 手写结论 → 打分
+# C. 公开文本画像（默认由 agent 写终稿；--llm 才调外部接口）
+python3 scripts/xueqiu_audit.py profile work/2292705444
+python3 scripts/xueqiu_audit.py profile work/2292705444 --render
+python3 scripts/xueqiu_audit.py profile work/2292705444 --with-report
+
+# D. 扫四元组 → 按 inclusion.md 改成 calls.json → 手写结论 → 打分
 python3 scripts/xueqiu_audit.py draft work/2292705444/posts.json --out work/2292705444/candidates.json
 python3 scripts/xueqiu_audit.py score work/2292705444/calls.json --out work/2292705444/scorecard.json
 python3 scripts/xueqiu_audit.py report work/2292705444/scorecard.json --out work/2292705444/report
 
-# D. 公开组合对基准（累计 / 年化 / 超额 / 财富倍数）
+# E. 公开组合对基准（累计 / 年化 / 超额 / 财富倍数）
 python3 scripts/xueqiu_audit.py cubes --example
 python3 scripts/xueqiu_audit.py cubes 2292705444 --from-dir work/2292705444
 python3 scripts/xueqiu_audit.py cubes --symbol ZH2001629 --from 2019-07-11 --to 2020-11-06
@@ -160,21 +173,26 @@ xueqiu-prediction-audit/
 ├── SKILL.md
 ├── LICENSE
 ├── requirements.txt          # 可选：browser-cookie3
-├── scripts/xueqiu_audit.py   # doctor / example / cookie / fetch / draft / score / report / cubes
+├── scripts/xueqiu_audit.py   # doctor / example / cookie / fetch / draft / score / profile / report / cubes
 ├── scripts/audit_core.py
+├── scripts/ai_profile.py     # 公开文本画像：抽样 / 规则稿 / OpenAI 兼容接口 / 浅色稿
 ├── scripts/vpush_xueqiu.py   # sidecar cookie + UID / 正文 / 评论语料（不内置 solver）
 ├── references/scoring.md
 ├── references/calls.md
 ├── references/report.md
 ├── references/persona.md
+├── references/ai_profile.md
 ├── references/cli.md
 ├── examples/metalslime.md
 ├── examples/inclusion.md
 ├── examples/metalslime_calls.json
 ├── examples/metalslime_scorecard.json
+├── examples/metalslime_ai_profile.json
 ├── examples/metalslime_cubes.json
 ├── examples/draft_posts.json
-└── tests/test_core.py
+└── tests/
+    ├── test_core.py
+    └── test_ai_profile.py
 ```
 
 ## 安全边界
@@ -183,7 +201,7 @@ xueqiu-prediction-audit/
 - 不要把组合净值写进标题战绩。
 - 不要对客户提内部版本号。
 - 不要把结果说成可跟盘的实盘信号。
-- 不要把行为画像或 MBTI 写成心理诊断，也不要把表述对照写成测谎。
+- 不要把行为画像、AI 画像或 MBTI 写成心理诊断，也不要把表述对照写成测谎。画像不进入命中加权。
 - 不要为了取数去绕过站点防护，也不要在本仓库启动 waf-bot solver。
 
 ---
@@ -192,9 +210,10 @@ xueqiu-prediction-audit/
 
 # Public Prediction Audit Skill
 
-Two light-theme reports for Xueqiu (and similar) public influencers:
+Three light-theme reports for Xueqiu (and similar) public influencers:
 
 - **Prediction audit:** dated, directional, falsifiable calls scored as **direction**, **price targets**, and **copy-trade P&amp;L**. `draft` extracts a four-tuple (stock / side / price / time) from the author's own sentence; mentions are not prices. The report header shows **registered year · scored-call span**, not career-from-signup.
+- **Public-text profile:** `profile` samples posts/replies (and scored calls if present). The current agent writes `ai_profile.json`; `--llm` is optional. Standalone or embedded in the audit. Not a psych test, not a fraud score, and it never enters hit weights.
 - **Cube quant:** public paper portfolios vs benchmarks — cumulative, annualized (only if ≥365 days), excess in percentage points, and wealth multiple `(1+cube)/(1+bench)`. Cube NAV never enters call scoring.
 
 Scraping is not the gate. `example` and `cubes --example` work offline. `draft` only proposes candidates. `score` reads sibling `posts.json` for the public-text portrait, retries Yahoo on 429, and marks missing US/HK prices instead of failing. Default `fetch` is deep (posts + Q&amp;A + the influencer's own comments) when a V Push sidecar cookie is present. Write `conclusion` / `playbook` after scoring; autogen copy is a fallback. Not investment advice.

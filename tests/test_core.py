@@ -866,6 +866,35 @@ class BundleTests(unittest.TestCase):
         self.assertIn("公开模拟盘", html)
         self.assertNotIn("v1", html)
 
+    def test_client_deliver_copies_named_artifacts(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            src = root / "work" / "uid" / "report"
+            src.mkdir(parents=True)
+            (src / "report.html").write_text("html", encoding="utf-8")
+            (src / "report.pdf").write_bytes(b"%PDF")
+            (src / "report.png").write_bytes(b"png")
+            dest_root = root / "main"
+            dest_root.mkdir()
+            copied = core.deliver_client_artifacts(
+                src, "雪月霜", "2026-08-25", root=dest_root
+            )
+            dest = dest_root / "雪月霜"
+            names = sorted(p.name for p in copied)
+            self.assertEqual(
+                names,
+                [
+                    "雪月霜-预测审计-20260825.html",
+                    "雪月霜-预测审计-20260825.pdf",
+                    "雪月霜-预测审计-20260825.png",
+                ],
+            )
+            self.assertEqual((dest / names[0]).read_text(encoding="utf-8"), "html")
+            self.assertEqual(
+                core.deliver_client_artifacts(src, "雪月霜", "2026-08-25", example=True, root=dest_root),
+                [],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
