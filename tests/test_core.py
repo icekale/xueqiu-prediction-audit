@@ -6,10 +6,12 @@ import sys
 import unittest
 from datetime import date
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(HERE))
 import audit_core as core  # noqa: E402
+import vpush_xueqiu as vpush  # noqa: E402
 
 
 class DirectionTests(unittest.TestCase):
@@ -139,6 +141,137 @@ class CubeWindowTests(unittest.TestCase):
         self.assertTrue(cube["custom_window"])
         self.assertTrue(cube["paper_only"])
         self.assertIn("指定观察期", cube["blurb"])
+
+
+class VpushBridgeTests(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+
+        self._tmpobj = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmpobj.cleanup)
+        self._tmpdir = self._tmpobj.name
+
+    def _tmp(self) -> str:
+        return self._tmpdir
+
+    def test_normalize_xueqiu_id(self):
+        self.assertEqual(vpush.normalize_xueqiu_id("https://xueqiu.com/u/4514680565"), "4514680565")
+        self.assertEqual(vpush.normalize_xueqiu_id("https://xueqiu.com/u/4514680565/"), "4514680565")
+        self.assertEqual(vpush.normalize_xueqiu_id("https://www.xueqiu.com/u/123?foo=bar"), "123")
+        self.assertEqual(vpush.normalize_xueqiu_id("4514680565"), "4514680565")
+        self.assertEqual(vpush.normalize_xueqiu_id("https://xueqiu.com/Syedc"), "https://xueqiu.com/Syedc")
+        self.assertEqual(vpush.normalize_xueqiu_id(""), "")
+        self.assertEqual(vpush.normalize_xueqiu_id(None), "")
+
+    def test_merge_waf_cookie_uses_sidecar_when_seed_matches(self):
+        login = "xq_a_token=abc; u=123"
+        waf = Path(self._tmp()) / "waf_cookies.json"
+        waf.write_text(
+            json.dumps(
+                {
+                    "fetched_at": 1,
+                    "seed_sha256": vpush.cookie_sha256(login),
+                    "cookies": [
+                        {"name": "acw_tc", "value": "NEW_ACW"},
+                        {"name": "u", "value": "999"},
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        merged = vpush.merge_waf_cookie(login, waf)
+        self.assertIn("acw_tc=NEW_ACW", merged)
+        self.assertIn("u=999", merged)
+        self.assertNotIn("xq_a_token=abc", merged)
+
+    def test_merge_waf_cookie_keeps_new_login_when_seed_stale(self):
+        waf = Path(self._tmp()) / "waf_cookies.json"
+        waf.write_text(
+            json.dumps(
+                {
+                    "seed_sha256": vpush.cookie_sha256("xq_a_token=old"),
+                    "cookies": [{"name": "acw_tc", "value": "challenge"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.assertEqual(vpush.merge_waf_cookie("xq_a_token=new", waf), "xq_a_token=new")
+
+    def test_merge_waf_cookie_uses_sidecar_without_login(self):
+        waf = Path(self._tmp()) / "waf_cookies.json"
+        waf.write_text(
+            json.dumps({"cookies": [{"name": "xq_a_token", "value": "from-bot"}]}),
+            encoding="utf-8",
+        )
+        self.assertEqual(vpush.merge_waf_cookie("", waf), "xq_a_token=from-bot")
+
+    def test_merge_waf_cookie_missing_falls_back(self):
+        missing = Path(self._tmp()) / "nope.json"
+        self.assertEqual(vpush.merge_waf_cookie("xq_a_token=keep", missing), "xq_a_token=keep")
+
+    def test_parse_waf_json_and_prefer_full_text(self):
+        raw = json.dumps(
+            {
+                "fetched_at": 10,
+                "cookies": [{"name": "xq_a_token", "value": "tok"}, {"name": "u", "value": "1"}],
+            }
+        )
+        cookie, sidecar = vpush.parse_cookie_payload(raw)
+        self.assertEqual(cookie, "xq_a_token=tok; u=1")
+        self.assertIsNotNone(sidecar)
+        long_text = "完整长文" * 20
+        body = vpush.prefer_full_text({"description": "开头…", "text": long_text})
+        self.assertEqual(body, long_text)
+        self.assertEqual(vpush.prefer_full_text({"description": "短的", "text": ""}), "短的")
+
+    def test_classify_and_waf_html(self):
+        self.assertEqual(vpush.classify_status({"description": "原创"}), "post")
+        self.assertIsNone(vpush.classify_status({"description": "转发", "retweeted_status": {"id": 1}}))
+        self.assertEqual(
+            vpush.classify_status({"description": "回复 @foo ", "commentId": 9}),
+            "reply",
+        )
+        self.assertTrue(vpush.is_waf_html("<html>aliyun_waf</html>"))
+        self.assertTrue(vpush.is_waf_html("<html>var renderData = {}</html>", "text/html"))
+        self.assertFalse(vpush.is_waf_html('{"statuses":[]}'))
+
+    def test_sidecar_status_never_prints_secrets(self):
+        secret = "xq_a_token=SUPERSECRET"
+        waf = Path(self._tmp()) / "waf_cookies.json"
+        waf.write_text(
+            json.dumps(
+                {
+                    "fetched_at": 1,
+                    "seed_sha256": vpush.cookie_sha256(secret),
+                    "cookies": [{"name": "xq_a_token", "value": "SUPERSECRET"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        with mock.patch.object(vpush, "find_sidecar", return_value=waf):
+            status = vpush.sidecar_status(secret)
+        self.assertIn("seed_match=yes", status)
+        self.assertNotIn("SUPERSECRET", status)
+        self.assertNotIn("xq_a_token=", status)
+
+    def test_slim_status_uses_full_text(self):
+        long_text = "完整正文超过截断"
+        slim = core.slim_status(
+            {
+                "id": 1,
+                "created_at": 1700000000000,
+                "description": "开头…",
+                "text": long_text,
+                "user": {"screen_name": "foo"},
+            }
+        )
+        self.assertEqual(slim["text"], long_text)
+        self.assertEqual(slim["post_type"], "post")
+
+    def test_fetch_rejects_non_numeric_uid(self):
+        import xueqiu_audit
+
+        self.assertEqual(xueqiu_audit.main(["fetch", "https://xueqiu.com/Syedc"]), 2)
 
 
 class BundleTests(unittest.TestCase):

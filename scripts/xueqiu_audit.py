@@ -18,6 +18,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 import audit_core as core  # noqa: E402
+import vpush_xueqiu as vpush  # noqa: E402
 
 
 def out_dir(path: str | None, default: str) -> Path:
@@ -29,8 +30,10 @@ def out_dir(path: str | None, default: str) -> Path:
 def cmd_doctor(_args: argparse.Namespace) -> int:
     print("python", sys.version.split()[0])
     print("skill", ROOT)
+    login = core.read_login_cookie()
     print("cookie", core.cookie_status(core.read_cookie()))
     print("cookie_file", core.COOKIE_PATH if core.COOKIE_PATH.exists() else "not created")
+    print("waf_sidecar", core.sidecar_status(login))
     chrome = core.chrome_bin()
     print("chrome", chrome or "missing（HTML 仍可用，PDF 需要 Chrome）")
     extras = []
@@ -46,6 +49,7 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
     print("  python3 scripts/xueqiu_audit.py example")
     print("  python3 scripts/xueqiu_audit.py cubes --example")
     print("  python3 scripts/xueqiu_audit.py cookie")
+    print("  python3 scripts/xueqiu_audit.py cookie --from-file waf_cookies.json")
     print("  python3 scripts/xueqiu_audit.py fetch 2292705444")
     print("  python3 scripts/xueqiu_audit.py import-posts posts.json")
     print("  python3 scripts/xueqiu_audit.py draft work/2292705444/posts.json")
@@ -55,16 +59,26 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
 def cmd_cookie(args: argparse.Namespace) -> int:
     if args.from_file:
         raw = Path(args.from_file).expanduser().read_text(encoding="utf-8", errors="replace").strip()
-        path = core.write_cookie(raw)
-        print("saved", path, core.cookie_status(raw))
+        cookie, sidecar = vpush.parse_cookie_payload(raw)
+        if not cookie:
+            print("文件里没有可用 cookie。", file=sys.stderr)
+            return 2
+        path = core.write_cookie(cookie)
+        if sidecar:
+            side_path = core.write_waf_sidecar(sidecar)
+            print("saved", path, core.cookie_status(cookie))
+            print("waf_sidecar", side_path, core.sidecar_status(cookie))
+        else:
+            print("saved", path, core.cookie_status(cookie))
         return 0
     try:
         cookie = core.import_browser_cookie()
     except Exception as exc:
         print("无法从浏览器导入：", exc, file=sys.stderr)
         print(
-            "改用：在已登录的 xueqiu.com 复制 Cookie，写入文件后执行\n"
-            "  python3 scripts/xueqiu_audit.py cookie --from-file ./my-cookie.txt",
+            "改用：在已登录的 xueqiu.com 复制 Cookie，或把 waf-bot 的 waf_cookies.json 拿来：\n"
+            "  python3 scripts/xueqiu_audit.py cookie --from-file ./my-cookie.txt\n"
+            "  python3 scripts/xueqiu_audit.py cookie --from-file ./waf_cookies.json",
             file=sys.stderr,
         )
         return 1
@@ -73,11 +87,28 @@ def cmd_cookie(args: argparse.Namespace) -> int:
     return 0
 
 
+def _fetch_err(label: str, exc: Exception, manifest: dict) -> str:
+    detail = str(exc) if str(exc) in {"waf_blocked", "blocked_html"} else type(exc).__name__
+    manifest["errors"].append(f"{label}:{detail}")
+    print(label, "failed:", detail)
+    return detail
+
+
 def cmd_fetch(args: argparse.Namespace) -> int:
-    uid = args.uid
+    uid = core.normalize_xueqiu_id(args.uid)
+    if not uid.isdigit():
+        print("UID 无法识别。请用数字或 https://xueqiu.com/u/数字", file=sys.stderr)
+        return 2
     dest = out_dir(args.out, f"work/{uid}")
-    cookie = core.read_cookie()
+    login = core.read_login_cookie()
+    cookie = vpush.merge_waf_cookie(login)
     manifest = {"uid": uid, "mode": args.mode, "sources": [], "errors": []}
+    if not cookie:
+        manifest["cookie"] = "none"
+    elif cookie != login:
+        manifest["cookie"] = "sidecar"
+    else:
+        manifest["cookie"] = "login"
 
     if cookie:
         try:
@@ -92,8 +123,7 @@ def cmd_fetch(args: argparse.Namespace) -> int:
             manifest["sources"].append("xueqiu_profile")
             print("profile", user.get("screen_name"), "followers", user.get("followers_count"))
         except Exception as exc:
-            manifest["errors"].append(f"profile:{type(exc).__name__}")
-            print("profile failed:", type(exc).__name__)
+            _fetch_err("profile", exc, manifest)
         try:
             cubes = core.fetch_cubes(uid, cookie)
             (dest / "cubes.json").write_text(json.dumps(cubes, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -113,13 +143,13 @@ def cmd_fetch(args: argparse.Namespace) -> int:
                     nav_ok += 1
                     time.sleep(0.25)
                 except Exception as exc:
-                    manifest["errors"].append(f"nav:{symbol}:{type(exc).__name__}")
+                    _fetch_err(f"nav:{symbol}", exc, manifest)
                     time.sleep(0.4)
             if nav_ok:
                 manifest["sources"].append(f"xueqiu_cube_nav:{nav_ok}")
                 print("cube_nav", nav_ok)
         except Exception as exc:
-            manifest["errors"].append(f"cubes:{type(exc).__name__}")
+            _fetch_err("cubes", exc, manifest)
         pages = {"long": 20, "hot": 20, "original": 15 if args.mode == "thin" else 900}
         kinds = [("long", {"type": 2}), ("hot", {"type": 9}), ("original", {"type": 0})]
         posts = []
@@ -131,12 +161,13 @@ def cmd_fetch(args: argparse.Namespace) -> int:
                 manifest["sources"].append(f"xueqiu_{kind}:{len(items)}")
                 print(kind, len(items))
             except Exception as exc:
-                manifest["errors"].append(f"{kind}:{type(exc).__name__}")
-                print(kind, "failed:", type(exc).__name__)
+                _fetch_err(kind, exc, manifest)
         if posts:
             (dest / "posts.json").write_text(json.dumps(core.normalize_posts(posts), ensure_ascii=False, indent=2), encoding="utf-8")
             manifest["posts"] = len(posts)
             manifest["coverage"] = "thin" if args.mode == "thin" else "full"
+        elif any("waf_blocked" in err for err in manifest["errors"]):
+            print("被防护页挡住。换 WAF_COOKIE_FILE / cookie --from-file，或 import-posts。不要启动 solver。")
     else:
         print("没有登录态，改走公开 RSS（历史短，只够薄样本）")
         try:
@@ -153,9 +184,11 @@ def cmd_fetch(args: argparse.Namespace) -> int:
             print("rsshub failed:", type(exc).__name__)
             print(
                 "\n雪球挡住了匿名抓取。任选其一继续：\n"
-                "  1. 浏览器登录 xueqiu.com 后：python3 scripts/xueqiu_audit.py cookie\n"
-                "  2. 自己导出时间线：python3 scripts/xueqiu_audit.py import-posts posts.json\n"
-                "  3. 先看离线样例：python3 scripts/xueqiu_audit.py example\n"
+                "  1. 已有 V Push waf-bot sidecar：export WAF_COOKIE_FILE=.../waf_cookies.json 后重试 fetch\n"
+                "  2. 浏览器登录 xueqiu.com 后：python3 scripts/xueqiu_audit.py cookie\n"
+                "  3. 自己导出时间线：python3 scripts/xueqiu_audit.py import-posts posts.json\n"
+                "  4. 先看离线样例：python3 scripts/xueqiu_audit.py example\n"
+                "不要在本仓库启动 WAF solver。\n"
             )
             (dest / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
             return 2
@@ -362,7 +395,7 @@ def cmd_cubes(args: argparse.Namespace) -> int:
     metas: list[dict] = []
     navs: dict = {}
     account = ""
-    uid = args.uid or ""
+    uid = core.normalize_xueqiu_id(args.uid or "")
     from_dir = Path(args.from_dir).expanduser() if args.from_dir else None
 
     if from_dir:
@@ -396,12 +429,12 @@ def cmd_cubes(args: argparse.Namespace) -> int:
 
     if args.uid and cookie:
         try:
-            listed = core.cube_list_items(core.fetch_cubes(args.uid, cookie))
+            listed = core.cube_list_items(core.fetch_cubes(uid, cookie))
             if not metas:
                 metas = [core.slim_cube_meta(item) for item in listed]
             owner = (listed[0].get("owner") or {}) if listed else {}
             account = account or owner.get("screen_name") or ""
-            uid = uid or args.uid
+            uid = uid or core.normalize_xueqiu_id(args.uid or "")
             print("cubes", len(listed))
             for item in listed:
                 symbol = item.get("symbol")
@@ -489,11 +522,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("doctor", help="检查 Python、cookie、Chrome")
 
-    c = sub.add_parser("cookie", help="从本机浏览器或文件导入自己的雪球登录态")
-    c.add_argument("--from-file", help="Cookie 文本文件，不要提交到 git")
+    c = sub.add_parser("cookie", help="从本机浏览器、cookie 文本或 waf-bot sidecar JSON 导入登录态")
+    c.add_argument("--from-file", help="Cookie 文本或 waf_cookies.json，不要提交到 git")
 
     f = sub.add_parser("fetch", help="拉公开主页、组合列表/净值和时间线")
-    f.add_argument("uid", help="雪球 UID，如 2292705444")
+    f.add_argument("uid", help="雪球 UID 或主页，如 2292705444 / https://xueqiu.com/u/2292705444")
     f.add_argument("--mode", choices=("thin", "full"), default="thin", help="thin=长文+热门+近页；full=全原创")
     f.add_argument("--out", help="输出目录，默认 work/<uid>")
 

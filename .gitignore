@@ -1,6 +1,7 @@
 .DS_Store
 *.cookie
 cookie.txt
+waf_cookies.json
 .env
 config.yaml
 raw/

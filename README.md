@@ -38,7 +38,7 @@ English: [English](#english)
 | 许可 | MIT |
 | 仓库 | https://github.com/icekale/xueqiu-prediction-audit |
 
-V Push 负责把公开动态收进来；本 skill 负责把历史发言做成可复核的预测审计。两者独立使用。已在跑 V Push 的人可以把现有时间线 `import-posts`，不必再爬一次。
+V Push 负责把公开动态收进来；本 skill 负责把历史发言做成可复核的预测审计。两者独立使用。已在跑 V Push 的人可以把现有时间线 `import-posts`，或把 waf-bot 的 `waf_cookies.json` 交给 `cookie --from-file` / `WAF_COOKIE_FILE` 再 `fetch`，不必再爬一次，也不要把 solver 拷进本仓库。
 
 ## 安装
 
@@ -102,9 +102,11 @@ https://xueqiu.com/u/2292705444
 # A. 已有导出
 python3 scripts/xueqiu_audit.py import-posts posts.json --out work/2292705444
 
-# B. 浏览器已登录雪球
+# B. V Push sidecar 或浏览器已登录雪球
+export WAF_COOKIE_FILE=/path/to/waf_cookies.json
+python3 scripts/xueqiu_audit.py cookie --from-file waf_cookies.json
 python3 scripts/xueqiu_audit.py cookie
-python3 scripts/xueqiu_audit.py fetch 2292705444          # 默认薄样本
+python3 scripts/xueqiu_audit.py fetch 2292705444          # 默认薄样本；也接受主页 URL
 python3 scripts/xueqiu_audit.py fetch 2292705444 --mode full
 
 # C. 扫候选 → 按 inclusion.md 改成 calls.json → 打分
@@ -134,6 +136,8 @@ Cookie 可放环境变量，不要写进仓库：
 export XUEQIU_COOKIE="..."
 # 或
 export XUEQIU_COOKIE_FILE="$HOME/.config/xueqiu-prediction-audit/cookie"
+# 已有 V Push waf-bot 时：
+export WAF_COOKIE_FILE="/data/waf_cookies.json"
 ```
 
 命令说明见 [`references/cli.md`](references/cli.md)。
@@ -163,6 +167,7 @@ xueqiu-prediction-audit/
 ├── requirements.txt          # 可选：browser-cookie3
 ├── scripts/xueqiu_audit.py   # doctor / example / cookie / fetch / draft / score / report / cubes
 ├── scripts/audit_core.py
+├── scripts/vpush_xueqiu.py   # sidecar cookie + UID / 正文（不内置 solver）
 ├── references/scoring.md
 ├── references/calls.md
 ├── references/report.md
@@ -182,7 +187,7 @@ xueqiu-prediction-audit/
 - 不要把组合净值写进标题战绩。
 - 不要对客户提内部版本号。
 - 不要把结果说成可跟盘的实盘信号。
-- 不要为了取数去绕过站点防护。
+- 不要为了取数去绕过站点防护，也不要在本仓库启动 waf-bot solver。
 
 ---
 

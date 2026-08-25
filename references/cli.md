@@ -19,7 +19,21 @@ python3 scripts/xueqiu_audit.py import-posts posts.json --out work/UID
 
 `posts.json` 可以是数组，或带 `posts` / `statuses` / `items` 的对象。字段至少有日期和正文。V Push 导出的雪球时间线（`statuses`）可直接喂，不必再爬。
 
-2. **本机已经登录雪球**
+2. **V Push / waf-bot 已在跑**（优先于再爬一次）
+
+只读 sidecar 写出的 cookie，不要在本仓库启动 `waf-bot/solver.js`。
+
+```bash
+export WAF_COOKIE_FILE=/path/to/waf_cookies.json   # 生产默认 /data/waf_cookies.json
+# 或把文件拷过来：
+python3 scripts/xueqiu_audit.py cookie --from-file waf_cookies.json
+python3 scripts/xueqiu_audit.py fetch 2292705444
+python3 scripts/xueqiu_audit.py fetch https://xueqiu.com/u/2292705444
+```
+
+`doctor` 会报 `waf_sidecar` 的年龄和 seed 是否对得上，不打印 cookie。sidecar 的 `seed_sha256` 对不上当前登录串时，沿用登录串，不覆盖。
+
+3. **本机已经登录雪球**
 
 ```bash
 pip install -r requirements.txt
@@ -30,9 +44,9 @@ python3 scripts/xueqiu_audit.py fetch UID --mode full   # 全原创，慢
 
 Cookie 写到 `~/.config/xueqiu-prediction-audit/cookie`（600）。也可用 `XUEQIU_COOKIE` 或 `XUEQIU_COOKIE_FILE`。禁止打印。
 
-3. **没有登录态**
+4. **没有登录态**
 
-`fetch` 会尝试公开 RSS。历史短，只够薄样本。失败就退回 1 或 2，不要打 WAF。
+`fetch` 会尝试公开 RSS。历史短，只够薄样本。失败就退回 1–3。遇到防护页就停，不要解挑战。
 
 ## 打分和报告
 

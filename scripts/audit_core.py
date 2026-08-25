@@ -17,6 +17,8 @@ from statistics import median
 from typing import Any
 from xml.etree import ElementTree as ET
 
+import vpush_xueqiu as vpush
+
 TZ = timezone(timedelta(hours=8))
 UA = (
     "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) "
@@ -48,29 +50,34 @@ def cookie_status(cookie: str) -> str:
     return f"ok ({len(text)} chars, token={'yes' if has_token else 'no'})"
 
 
-def read_cookie() -> str:
+def read_login_cookie() -> str:
+    """登录串本身，不叠加 sidecar。供 doctor / seed 比对。"""
     env = os.environ.get("XUEQIU_COOKIE", "").strip()
     if env:
-        return env
+        cookie, _ = vpush.parse_cookie_payload(env)
+        return cookie
     file_env = os.environ.get("XUEQIU_COOKIE_FILE", "").strip()
     paths = []
     if file_env:
-        paths.append(Path(file_env))
+        paths.append(Path(file_env).expanduser())
     paths.append(COOKIE_PATH)
-    vpush = os.environ.get("VPUSH_CONFIG", "").strip()
-    if vpush:
-        paths.append(Path(vpush))
+    vpush_cfg = os.environ.get("VPUSH_CONFIG", "").strip()
+    if vpush_cfg:
+        paths.append(Path(vpush_cfg).expanduser())
     for path in paths:
         if not path.is_file():
             continue
         raw = path.read_text(encoding="utf-8", errors="replace")
-        if "xq_a_token" in raw and ("cookie:" in raw or path.suffix in {".yaml", ".yml"}):
-            match = re.search(r'cookie:\s*["\']([^"\']*xq_a_token[^"\']*)["\']', raw)
-            if match:
-                return match.group(1).strip()
+        cookie, _ = vpush.parse_cookie_payload(raw)
+        if cookie:
+            return cookie
         if "xq_a_token" in raw or "u=" in raw:
             return raw.strip().splitlines()[0].strip()
     return ""
+
+
+def read_cookie() -> str:
+    return vpush.merge_waf_cookie(read_login_cookie())
 
 
 def write_cookie(cookie: str) -> Path:
@@ -80,6 +87,18 @@ def write_cookie(cookie: str) -> Path:
     COOKIE_PATH.write_text(cookie.strip() + "\n", encoding="utf-8")
     COOKIE_PATH.chmod(0o600)
     return COOKIE_PATH
+
+
+def write_waf_sidecar(data: dict) -> Path:
+    config_dir()
+    return vpush.write_sidecar(data, CONFIG_DIR / "waf_cookies.json")
+
+
+def sidecar_status(login_cookie: str | None = None) -> str:
+    return vpush.sidecar_status(login_cookie if login_cookie is not None else read_login_cookie())
+
+
+normalize_xueqiu_id = vpush.normalize_xueqiu_id
 
 
 def import_browser_cookie() -> str:
@@ -122,12 +141,20 @@ def http_json(url: str, headers: dict[str, str] | None = None, timeout: int = 25
             req = urllib.request.Request(url, headers=req_headers)
             with urllib.request.urlopen(req, timeout=timeout, context=TLS) as resp:
                 raw = resp.read()
+                content_type = resp.headers.get("Content-Type", "")
             text = raw.decode("utf-8", "replace")
-            if text.lstrip().startswith("<") or "aliyun_waf" in text[:500]:
+            if vpush.is_waf_html(text, content_type):
+                raise RuntimeError("waf_blocked")
+            if text.lstrip().startswith("<"):
                 raise RuntimeError("blocked_html")
             if text.startswith("kline_") and "=" in text[:40]:
                 text = text.split("=", 1)[1]
             return json.loads(text)
+        except RuntimeError as exc:
+            if str(exc) in {"waf_blocked", "blocked_html"}:
+                raise
+            last = exc
+            time.sleep(0.4 * (attempt + 1))
         except Exception as exc:  # noqa: BLE001
             last = exc
             time.sleep(0.4 * (attempt + 1))
@@ -171,11 +198,12 @@ def slim_status(status: dict) -> dict:
         "created_at": created,
         "created_str": created_str,
         "title": status.get("title") or "",
-        "text": status.get("text") or "",
+        "text": vpush.prefer_full_text(status),
         "description": status.get("description") or "",
         "like_count": status.get("like_count") or status.get("fav_count"),
         "view_count": status.get("view_count"),
         "type": status.get("type"),
+        "post_type": vpush.classify_status(status),
         "retweeted_text": retweet.get("text") or retweet.get("description") or "",
         "user": user.get("screen_name"),
     }
@@ -612,7 +640,7 @@ def normalize_posts(raw: Any) -> list[dict]:
     for item in raw:
         if not isinstance(item, dict):
             continue
-        text = item.get("text") or item.get("description") or item.get("content") or ""
+        text = vpush.prefer_full_text(item)
         text = re.sub(r"<[^>]+>", " ", str(text))
         text = re.sub(r"\s+", " ", html.unescape(text)).strip()
         out.append(
