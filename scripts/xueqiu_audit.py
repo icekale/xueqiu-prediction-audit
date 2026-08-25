@@ -427,6 +427,19 @@ def cmd_report(args: argparse.Namespace) -> int:
     sc = json.loads(Path(args.scorecard).expanduser().read_text(encoding="utf-8"))
     dest = out_dir(args.out, "work/report")
     html_path = dest / "report.html"
+    posts = None
+    sibling = Path(args.scorecard).expanduser().parent / "posts.json"
+    if sibling.exists():
+        raw = json.loads(sibling.read_text(encoding="utf-8"))
+        posts = raw if isinstance(raw, list) else raw.get("posts") or raw.get("corpus")
+        if not isinstance(posts, list):
+            posts = None
+    if not sc.get("persona"):
+        sc["persona"] = core.auto_persona(sc, posts)
+    if not sc.get("consistency"):
+        sc["consistency"] = core.auto_consistency(sc, posts)
+    if not sc.get("mbti"):
+        sc["mbti"] = core.auto_mbti(sc, posts)
     html_path.write_text(core.render_html(sc), encoding="utf-8")
     print("html", html_path)
     export_pdf_png(html_path, dest, png=args.png)
@@ -606,7 +619,7 @@ def build_parser() -> argparse.ArgumentParser:
     i.add_argument("file")
     i.add_argument("--out", default="work/import")
 
-    d = sub.add_parser("draft", help="从 posts.json 扫出预测候选，须人工入选后才能 score")
+    d = sub.add_parser("draft", help="按股票/方向/价格/时间扫候选，须人工入选后才能 score")
     d.add_argument("file")
     d.add_argument("--out", default="work/candidates.json")
     d.add_argument("--limit", type=int, default=80)

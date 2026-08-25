@@ -348,6 +348,8 @@ def author_comment_items(comments: list[dict], author_uid: str) -> list[dict]:
                 "user": comment.get("user"),
                 "user_id": comment.get("user_id"),
                 "post_type": "comment",
+                "parent_text": parent,
+                "parent_user": comment.get("parent_user") or "",
             }
         )
     return out

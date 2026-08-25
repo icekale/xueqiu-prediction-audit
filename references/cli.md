@@ -52,7 +52,7 @@ Cookie 写到 `~/.config/xueqiu-prediction-audit/cookie`（600）。也可用 `X
 
 ## 打分和报告
 
-先扫候选，再人工入选（字段见 [calls.md](calls.md)，批注见 [inclusion.md](../examples/inclusion.md)）：
+先扫四元组候选（股票 / 方向 / 价格 / 时间），碎片评论可先 LLM 补候选，再人工入选（字段见 [calls.md](calls.md)，批注见 [inclusion.md](../examples/inclusion.md)）：
 
 ```bash
 python3 scripts/xueqiu_audit.py draft work/UID/posts.json --out work/UID/candidates.json

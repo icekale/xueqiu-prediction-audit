@@ -1,6 +1,8 @@
 # 入选 / 排除批注
 
-`draft` 只扫关键词，**不是**入选。下面用雪球 metalslime（药神）的真实口径，说明哪些进 `calls.json`、哪些扔掉。换账号时按同一标准，不要按粉丝或组合净值。
+`draft` 按**股票 / 方向 / 价格 / 时间**四元组扫候选，**不是**入选。下面用雪球 metalslime（药神）的真实口径，说明哪些进 `calls.json`、哪些扔掉。换账号时按同一标准，不要按粉丝或组合净值。
+
+碎片评论、问答、只有「还能买」这种半句：可以先 LLM 补齐四元组，写成候选；**不要**把 LLM 草稿直接 `score`。粉丝问句里的多空不是作者方向。
 
 ## 入选
 
@@ -96,7 +98,7 @@
 python3 scripts/xueqiu_audit.py draft work/UID/posts.json --out work/UID/candidates.json
 ```
 
-打开 `candidates.json`，对照本页改成 `calls.json`：补 `symbol` / `horizon_m` / `kind`，删情绪和重复，写代理 `note`。然后：
+打开 `candidates.json`，对照本页改成 `calls.json`：核四元组，补 `symbol` / `horizon_m` / `kind` / `price_target`，删情绪和重复，写代理 `note`。`needs_llm` 的条目先补齐再决定去留。然后：
 
 ```bash
 python3 scripts/xueqiu_audit.py score work/UID/calls.json

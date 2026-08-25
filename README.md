@@ -127,7 +127,7 @@ python3 scripts/xueqiu_audit.py cubes --symbol ZH2001629 --from 2019-07-11 --to 
 python3 scripts/xueqiu_audit.py draft work/2292705444/posts.json --out work/2292705444/candidates.json
 ```
 
-`draft` 只扫关键词，不能直接 `score`。V Push 时间线（`statuses` 数组或带 `statuses` 的对象）可直接 `import-posts`。
+`draft` 扫股票 / 方向 / 价格 / 时间四元组，不能直接 `score`。碎片评论可先 LLM 补候选，仍须按 `examples/inclusion.md` 入选。V Push 时间线（`statuses` 数组或带 `statuses` 的对象）可直接 `import-posts`。
 
 行情不绑雪球：A 股前复权走东财 / 腾讯 / 新浪，美股港股走 Yahoo。只有这些都失败且你提供了登录态，才回退雪球日 K。
 

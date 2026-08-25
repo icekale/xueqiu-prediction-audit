@@ -720,6 +720,8 @@ def normalize_posts(raw: Any) -> list[dict]:
                 "url": item.get("url") or "",
                 "post_type": item.get("post_type"),
                 "comment_count": item.get("comment_count") or 0,
+                "parent_text": item.get("parent_text") or "",
+                "parent_user": item.get("parent_user") or "",
             }
         )
     return out
@@ -758,11 +760,66 @@ def post_day(post: dict) -> date | None:
 
 STOCK_TICKER_RE = re.compile(r"\$([^$()]+)\(([A-Za-z]{1,5}\d{0,6})\)\$")
 STOCK_BARE_RE = re.compile(r"\$([A-Z]{1,5})\$")
-LONG_HINTS = ("看多", "坚决看好", "现在可以买", "可以买了", "死多", "梭回", "上车")
-SHORT_HINTS = ("看空", "死空", "拒绝抄底", "不是底", "现在可以卖", "维持看空")
-TACTICAL_HINTS = ("现在可以", "拒绝抄底", "见底", "梭回", "点位")
+REPLY_SPLIT_RE = re.compile(r"（回复 @[^：:]{1,40}[：:]")
+PRICE_RANGE_RE = re.compile(
+    r"(?<![\d.])(\d{3,5}(?:\.\d{1,2})?)\s*[-~～—－–−到至]\s*(\d{3,5}(?:\.\d{1,2})?)(?![\d.%％])"
+)
+PRICE_LABELED_RE = re.compile(
+    r"(?:目标价|目标价位|见底|见顶|点位|价位|看)\s*(\d{3,5}(?:\.\d{1,2})?)(?![\d.%％])"
+)
+INDEX_LEVEL_RE = re.compile(r"(?:过|上|突破|站上|守住)\s*(\d{4})(?!\d)")
+HORIZON_RULES = (
+    (re.compile(r"五年|5年"), 60, "五年"),
+    (re.compile(r"三年|3年"), 36, "三年"),
+    (re.compile(r"两年|2年"), 24, "两年"),
+    (re.compile(r"一年|12个月|年底"), 12, "一年"),
+    (re.compile(r"半年|6个月"), 6, "半年"),
+    (re.compile(r"一两个月|1-2个月|两个月|2个月"), 2, "一两个月"),
+    (re.compile(r"本月|月底|一个月|1个月"), 1, "一个月"),
+    (re.compile(r"本周|这周|一周"), 1, "一周"),
+)
+SYMBOL_ALIASES = (
+    ("中证白酒", "SZ399997"),
+    ("沪深300", "SH000300"),
+    ("科创50", "SH000688"),
+    ("创业板指", "SZ399006"),
+    ("上证指数", "SH000001"),
+    ("中际旭创", "SZ300308"),
+    ("贵州茅台", "SH600519"),
+    ("万科A", "SZ000002"),
+    ("万科", "SZ000002"),
+    ("茅台", "SH600519"),
+)
+LONG_HINTS = (
+    "看多",
+    "坚决看好",
+    "现在可以买",
+    "可以买了",
+    "死多",
+    "梭回",
+    "上车",
+    "开仓",
+    "逢低上",
+    "越跌越兴奋",
+    "继续持有",
+    "中线反弹",
+)
+SHORT_HINTS = (
+    "看空",
+    "死空",
+    "拒绝抄底",
+    "不是底",
+    "现在可以卖",
+    "维持看空",
+    "见顶",
+    "还会有回调",
+    "清仓",
+    "减仓离场",
+)
+TACTICAL_HINTS = ("现在可以", "拒绝抄底", "见底", "见顶", "梭回", "点位", "开仓", "清仓")
 MOOD_HINTS = ("今天心情", "这周看着难受", "今天好难受")
 FRAME_HINTS = ("IRR", "供需", "去金融化")
+CUBE_HINTS = ("不构成方向判断", "组合调仓")
 
 
 def _first_hit(text: str, keys: tuple[str, ...]) -> str | None:
@@ -772,88 +829,231 @@ def _first_hit(text: str, keys: tuple[str, ...]) -> str | None:
     return None
 
 
+def split_reply_context(text: str, parent_text: str = "") -> tuple[str, str]:
+    text = str(text or "")
+    parent = str(parent_text or "").strip()
+    match = REPLY_SPLIT_RE.search(text)
+    if match:
+        body = text[: match.start()].strip()
+        if not parent:
+            tail = text[match.end() :]
+            parent = tail[:-1].strip() if tail.endswith("）") else tail.strip()
+        return body, parent
+    return text.strip(), parent
+
+
 def guess_horizon(text: str, kind: str) -> int:
-    if "五年" in text or "5年" in text:
-        return 60
-    if "三年" in text or "3年" in text:
-        return 36
-    if "两年" in text or "2年" in text:
-        return 24
-    if "一年" in text or "12个月" in text:
-        return 12
+    months, _ = extract_horizon(text)
+    if months:
+        return months
     return 6 if kind == "tactical" else 12
+
+
+def extract_horizon(text: str) -> tuple[int | None, str | None]:
+    for pattern, months, label in HORIZON_RULES:
+        if pattern.search(text or ""):
+            return months, label
+    return None, None
+
+
+def _looks_like_year(value: float) -> bool:
+    return 1990 <= value <= 2035 and float(value).is_integer()
+
+
+def extract_price_target(text: str, symbol: str = "") -> dict | None:
+    text = text or ""
+    for lo_s, hi_s in PRICE_RANGE_RE.findall(text):
+        lo, hi = float(lo_s), float(hi_s)
+        if _looks_like_year(lo) and _looks_like_year(hi):
+            continue
+        if hi < lo:
+            lo, hi = hi, lo
+        if hi / max(lo, 1e-9) > 8:
+            continue
+        return {
+            "symbol": symbol,
+            "lo": int(lo) if lo.is_integer() else lo,
+            "hi": int(hi) if hi.is_integer() else hi,
+            "label": f"{lo_s}-{hi_s}",
+        }
+    for raw in PRICE_LABELED_RE.findall(text):
+        value = float(raw)
+        if _looks_like_year(value):
+            continue
+        return {
+            "symbol": symbol,
+            "lo": int(value) if value.is_integer() else value,
+            "hi": int(value) if value.is_integer() else value,
+            "label": raw,
+        }
+    for raw in INDEX_LEVEL_RE.findall(text):
+        value = float(raw)
+        if _looks_like_year(value):
+            continue
+        return {
+            "symbol": symbol,
+            "lo": int(value),
+            "hi": int(value),
+            "label": f"过{raw}" if f"过{raw}" in text else raw,
+        }
+    return None
+
+
+def extract_alias_symbols(text: str) -> list[tuple[str, str]]:
+    found = []
+    seen = set()
+    for name, symbol in SYMBOL_ALIASES:
+        if name in (text or "") and symbol not in seen:
+            seen.add(symbol)
+            found.append((symbol, name))
+    return found
 
 
 def extract_symbols(text: str) -> list[tuple[str, str]]:
     found = []
     seen = set()
-    for name, symbol in STOCK_TICKER_RE.findall(text):
+    for name, symbol in STOCK_TICKER_RE.findall(text or ""):
         symbol = symbol.upper()
         if symbol not in seen:
             seen.add(symbol)
             found.append((symbol, name.strip()))
-    for symbol in STOCK_BARE_RE.findall(text):
+    for symbol in STOCK_BARE_RE.findall(text or ""):
         symbol = symbol.upper()
         if symbol not in seen:
             seen.add(symbol)
             found.append((symbol, symbol))
+    for symbol, name in extract_alias_symbols(text or ""):
+        if symbol not in seen:
+            seen.add(symbol)
+            found.append((symbol, name))
     return found
+
+
+def extract_quad(text: str, parent_text: str = "") -> dict:
+    body, parent = split_reply_context(text, parent_text)
+    cube = bool(_first_hit(body, CUBE_HINTS) or _first_hit(parent, CUBE_HINTS))
+    long_hit = _first_hit(body, LONG_HINTS)
+    short_hit = _first_hit(body, SHORT_HINTS)
+    side = None
+    if short_hit and not long_hit:
+        side = -1
+    elif long_hit and not short_hit:
+        side = 1
+    elif short_hit and long_hit:
+        side = -1 if body.rfind(short_hit) > body.rfind(long_hit) else 1
+    symbols = extract_symbols(body) or extract_symbols(parent)
+    price = extract_price_target(body, symbols[0][0] if symbols else "") or extract_price_target(
+        parent, symbols[0][0] if symbols else ""
+    )
+    horizon_m, horizon_hit = extract_horizon(body)
+    if horizon_m is None:
+        horizon_m, horizon_hit = extract_horizon(parent)
+    kind = "tactical" if _first_hit(body, TACTICAL_HINTS) or price or (horizon_m or 99) <= 3 else "structure"
+    if horizon_m is None:
+        horizon_m = 6 if kind == "tactical" else 12
+    fragment = bool(parent) or len(body) < 24
+    mixed = bool(long_hit and short_hit)
+    quad = {
+        "stock": bool(symbols),
+        "direction": side is not None and not cube,
+        "price": bool(price),
+        "time": bool(horizon_hit),
+    }
+    return {
+        "body": body,
+        "parent": parent,
+        "side": None if cube else side,
+        "symbols": symbols,
+        "price_target": None if cube else price,
+        "horizon_m": horizon_m,
+        "horizon_explicit": bool(horizon_hit),
+        "horizon_hit": horizon_hit,
+        "kind": kind,
+        "direction_hit": None if cube else (short_hit or long_hit),
+        "cube": cube,
+        "fragment": fragment,
+        "mixed": mixed,
+        "quad": quad,
+        "needs_llm": (not cube) and (fragment or mixed or (side is not None and not symbols)),
+    }
 
 
 def draft_candidates(posts: list[dict], limit: int = 80) -> dict:
     candidates = []
     seen = set()
-    skipped = {"no_direction": 0, "mood": 0, "dup": 0}
+    skipped = {"no_direction": 0, "mood": 0, "dup": 0, "cube": 0}
+    missing = {"stock": 0, "price": 0, "time": 0}
     for post in posts:
         text = str(post.get("text") or post.get("title") or "")
-        if not text:
+        if not text and not post.get("parent_text"):
             continue
         day = post_day(post)
-        long_hit = _first_hit(text, LONG_HINTS)
-        short_hit = _first_hit(text, SHORT_HINTS)
-        if not long_hit and not short_hit:
-            skipped["no_direction"] += 1
+        quad = extract_quad(text, str(post.get("parent_text") or ""))
+        if quad["cube"]:
+            skipped["cube"] += 1
             continue
-        if _first_hit(text, MOOD_HINTS) and not (long_hit or short_hit):
+        if not quad["quad"]["direction"]:
+            if _first_hit(quad["body"], MOOD_HINTS):
+                skipped["mood"] += 1
+            else:
+                skipped["no_direction"] += 1
+            continue
+        if _first_hit(quad["body"], MOOD_HINTS) and not quad["direction_hit"]:
             skipped["mood"] += 1
             continue
-        side = -1 if short_hit and not long_hit else 1 if long_hit and not short_hit else None
-        if side is None:
-            # both sides in one post: leave for review, default to last hint type
-            side = -1 if text.rfind(short_hit or "") > text.rfind(long_hit or "") else 1
-        kind = "tactical" if _first_hit(text, TACTICAL_HINTS) else "structure"
-        symbols = extract_symbols(text)
-        if not symbols:
-            symbols = [("", "")]
+        kind = quad["kind"]
+        symbols = quad["symbols"] or [("", "")]
         for symbol, name in symbols:
-            key = (str(day), symbol or name, side)
+            key = (str(day), symbol or name, quad["side"])
             if key in seen:
                 skipped["dup"] += 1
                 continue
             seen.add(key)
-            quote = text[:120]
-            why = f"命中关键词「{short_hit or long_hit}」"
+            quote = (quad["body"] or text)[:120]
+            why = f"四元组：方向「{quad['direction_hit']}」"
+            if symbol:
+                why += f"，股票 {symbol}"
+            else:
+                why += "，股票待补"
+                missing["stock"] += 1
+            if quad["price_target"]:
+                why += f"，价位 {quad['price_target'].get('label')}（价位另判，不随方向命中）"
+            else:
+                missing["price"] += 1
+            if quad["horizon_explicit"]:
+                why += f"，时间 {quad['horizon_hit']}"
+            else:
+                why += "，时间未写，先按默认窗口"
+                missing["time"] += 1
             if post.get("source") == "comment" or str(post.get("id") or "").startswith("c-"):
                 why += "；来自大V评论，核对是否首次清楚表述"
-            if _first_hit(text, FRAME_HINTS) and kind == "structure":
+            if quad["needs_llm"]:
+                why += "；碎片/问答，可先 LLM 补候选，仍须人工入选"
+            if _first_hit(quad["body"], FRAME_HINTS) and kind == "structure":
                 why += "；文中有框架词，确认是否另有明确多空"
-            candidates.append(
-                {
-                    "draft": True,
-                    "needs_review": True,
-                    "id": str(post.get("id") or f"draft-{len(candidates)+1}"),
-                    "date": str(day) if day else "",
-                    "theme": (name or quote[:24]) or "待定",
-                    "side": side,
-                    "symbol": symbol,
-                    "horizon_m": guess_horizon(text, kind),
-                    "kind": kind,
-                    "cat": "",
-                    "note": why,
-                    "quote": quote,
-                    "source_id": post.get("id"),
-                }
-            )
+            row = {
+                "draft": True,
+                "needs_review": True,
+                "needs_llm": quad["needs_llm"],
+                "id": str(post.get("id") or f"draft-{len(candidates)+1}"),
+                "date": str(day) if day else "",
+                "theme": (name or quote[:24]) or "待定",
+                "side": quad["side"],
+                "symbol": symbol,
+                "horizon_m": quad["horizon_m"],
+                "kind": kind,
+                "cat": "",
+                "note": why,
+                "quote": quote,
+                "source_id": post.get("id"),
+                "quad": quad["quad"],
+            }
+            if quad["price_target"]:
+                pt = dict(quad["price_target"])
+                if symbol and not pt.get("symbol"):
+                    pt["symbol"] = symbol
+                row["price_target"] = pt
+            candidates.append(row)
             if len(candidates) >= limit:
                 break
         if len(candidates) >= limit:
@@ -861,10 +1061,12 @@ def draft_candidates(posts: list[dict], limit: int = 80) -> dict:
     return {
         "draft": True,
         "title": "预测候选（未入选）",
-        "note": "这是草稿，不是 calls.json。按 examples/inclusion.md 判断后再 score。",
+        "note": "这是草稿，不是 calls.json。按股票/方向/价格/时间四元组核对，缺项不要脑补；碎片评论可先 LLM 补候选，仍须按 examples/inclusion.md 入选后再 score。",
         "scanned": len(posts),
         "kept": len(candidates),
+        "needs_llm": sum(1 for row in candidates if row.get("needs_llm")),
         "skipped": skipped,
+        "quad_missing": missing,
         "calls": candidates,
     }
 
@@ -1350,7 +1552,7 @@ def score_calls(payload: dict, price_dir: Path, asof: date | None = None) -> dic
             "ret": call.get("todate_ret"),
         }
 
-    return {
+    scored = {
         "title": payload.get("title") or "公开预测审计",
         "account": payload.get("account") or "",
         "uid": payload.get("uid") or "",
@@ -1371,6 +1573,10 @@ def score_calls(payload: dict, price_dir: Path, asof: date | None = None) -> dic
         "baselines": baselines,
         "rows": rows,
     }
+    scored["persona"] = auto_persona(scored)
+    scored["consistency"] = auto_consistency(scored)
+    scored["mbti"] = auto_mbti(scored)
+    return scored
 
 
 def pct(value) -> str:
@@ -1407,6 +1613,393 @@ def auto_conclusion(sc: dict) -> str:
     if sc.get("coverage") == "thin":
         parts.append("本次是薄样本（长文/热门/近页），不是全时间线生涯审计。")
     return "".join(parts)
+
+
+ROUND_HINTS = ("十倍", "百倍", "翻倍", "千亿", "万亿")
+ADMIT_HINTS = ("卖飞", "认错", "反思", "纠错")
+RETRO_HINTS = ("当初没人信", "早就说过", "我说的没错", "又验证了", "我一直看多", "我一直看空")
+
+
+def persona_level(sc: dict) -> str:
+    rows = list(sc.get("rows") or [])
+    years = _row_years(rows)
+    span = (max(years) - min(years) + 1) if years else 0
+    n = len(rows)
+    if n < 8 or span < 2 or sc.get("coverage") == "thin":
+        return "draft"
+    if n >= 20 and span >= 4 and sc.get("coverage") != "thin":
+        return "profile"
+    return "portrait"
+
+
+def _row_years(rows: list[dict]) -> list[int]:
+    years = []
+    for row in rows:
+        year = str(row.get("date") or "")[:4]
+        if year.isdigit():
+            years.append(int(year))
+    return years
+
+
+def flip_events(rows: list[dict]) -> list[dict]:
+    latest: dict[str, dict] = {}
+    flips: list[dict] = []
+    for row in sorted(rows, key=lambda item: item.get("date") or ""):
+        symbol = row.get("symbol")
+        try:
+            side = int(row.get("side") or 0)
+        except (TypeError, ValueError):
+            continue
+        if not symbol or side not in {1, -1}:
+            continue
+        prev = latest.get(symbol)
+        if prev and int(prev.get("side") or 0) != side:
+            flips.append({"from": prev, "to": row})
+        latest[symbol] = row
+    return flips
+
+
+def auto_persona(sc: dict, posts: list | None = None) -> dict:
+    rows = list(sc.get("rows") or [])
+    summary = sc.get("summary") or {}
+    structure = summary.get("structure") or {}
+    tactical = summary.get("tactical") or {}
+    targets = summary.get("price_targets") or []
+    years = _row_years(rows)
+    span = (max(years) - min(years) + 1) if years else 0
+    n = len(rows)
+    level = persona_level(sc)
+    draft = level == "draft"
+    traits: list[dict] = []
+
+    st_n = int(structure.get("n") or 0)
+    ta_n = int(tactical.get("n") or 0)
+    st_hit = int((structure.get("dir") or {}).get("对") or 0)
+    ta_hit = int((tactical.get("dir") or {}).get("对") or 0)
+    if st_n or ta_n:
+        st_rate = st_hit / st_n if st_n else 0
+        ta_rate = ta_hit / ta_n if ta_n else 0
+        if st_n >= 3 and st_rate >= ta_rate + 0.15:
+            name = "结构比点位稳"
+        elif ta_n >= 3 and ta_rate >= st_rate + 0.15:
+            name = "点位比结构稳"
+        else:
+            name = "结构和点位要分开看"
+        traits.append(
+            {
+                "name": name,
+                "evidence": (
+                    f"结构 {st_hit}/{st_n} 对，战术 {ta_hit}/{ta_n} 对。"
+                    f"战术照做中位 {pct(tactical.get('copy_window_median'))}。"
+                ),
+            }
+        )
+
+    flips = flip_events(rows)
+    if flips:
+        examples = "、".join(
+            f"{item['from'].get('date')} "
+            f"{'多' if int(item['from'].get('side') or 0) > 0 else '空'}→"
+            f"{item['to'].get('date')} "
+            f"{'多' if int(item['to'].get('side') or 0) > 0 else '空'} "
+            f"{item['to'].get('symbol')}"
+            for item in flips[:3]
+        )
+        traits.append({"name": "同一标的会翻案", "evidence": f"{len(flips)} 次方向对调。例如 {examples}。"})
+
+    roundish: list[dict] = []
+    seen_round: set[tuple] = set()
+    for row in rows:
+        text = f"{row.get('theme') or ''} {row.get('note') or ''}"
+        if any(hint in text for hint in ROUND_HINTS):
+            key = (row.get("date"), row.get("theme"))
+            if key not in seen_round:
+                seen_round.add(key)
+                roundish.append(row)
+    for item in targets:
+        text = f"{item.get('label') or ''} {item.get('note') or ''}"
+        if any(hint in text for hint in ROUND_HINTS):
+            key = (item.get("date"), item.get("label"))
+            if key not in seen_round:
+                seen_round.add(key)
+                roundish.append({"date": item.get("date"), "theme": item.get("label")})
+    if roundish:
+        shown = "、".join(f"{row.get('date')} {row.get('theme')}" for row in roundish[:3])
+        traits.append({"name": "爱喊数量级", "evidence": shown + "。"})
+
+    givebacks = [
+        row
+        for row in rows
+        if (row.get("giveback") is not None and row["giveback"] <= -40)
+        or (
+            row.get("dir_window") == "对"
+            and row.get("copy_todate") is not None
+            and row.get("copy_window")
+            and row["copy_todate"] < row["copy_window"] - 30
+        )
+    ]
+    if givebacks:
+        worst = min(givebacks, key=lambda row: row.get("giveback") if row.get("giveback") is not None else 0)
+        traits.append(
+            {
+                "name": "窗口对也常拿不住",
+                "evidence": (
+                    f"{worst.get('date')} {worst.get('theme')} 窗口 {pct(worst.get('copy_window'))}，"
+                    f"高点回撤 {pct(worst.get('giveback'))}。"
+                ),
+            }
+        )
+
+    admits = [
+        row
+        for row in rows
+        if any(hint in f"{row.get('theme') or ''}{row.get('note') or ''}" for hint in ADMIT_HINTS)
+    ]
+    if admits:
+        last = admits[-1]
+        traits.append({"name": "事后会认卖飞", "evidence": f"{last.get('date')} {last.get('theme')}。"})
+
+    if posts:
+        blob = "".join(str(post.get("text") or post.get("description") or "") for post in posts)
+        voice = [f"「{word}」{blob.count(word)} 次" for word in ("老登", "一定能看到", "卖飞", "击球") if blob.count(word) >= 3]
+        if voice:
+            traits.append(
+                {
+                    "name": "公开话语有固定口头禅",
+                    "evidence": "语料里出现 " + "、".join(voice[:4]) + "。只统计用词，不当性格量表。",
+                }
+            )
+
+    traits = traits[:5]
+    names = "，".join(trait["name"] for trait in traits[:3]) or "公开判断有迹可循"
+    if draft:
+        headline = "样本偏短或偏薄，下面只是跟单习惯草稿，不是人格测写。"
+    elif level == "profile":
+        headline = f"样本够跨年，可做公开人格侧写：{names}。跨 {span} 个自然年、{n} 条可证伪方向。"
+    else:
+        headline = f"公开行为上更像：{names}。跨 {span} 个自然年、{n} 条可证伪方向。不是人格测写。"
+    return {
+        "draft": draft,
+        "level": level,
+        "headline": headline,
+        "traits": traits,
+        "note": "这是公开行为画像，不是心理诊断或人格量表。",
+    }
+
+
+def _consistency_relevant(text: str, rows: list[dict]) -> bool:
+    symbols = {row.get("symbol") for row in rows if row.get("symbol")}
+    if any(symbol and symbol in text for symbol in symbols):
+        return True
+    keys = ("科创", "创新药", "硅光", "光模块", "万科", "寒武纪", "机器人", "光伏")
+    return any(key in text for key in keys)
+
+
+def auto_consistency(sc: dict, posts: list | None = None) -> dict:
+    rows = list(sc.get("rows") or [])
+    flips: list[dict] = []
+    admits: list[dict] = []
+    retros: list[dict] = []
+    for event in flip_events(rows):
+        later = event["to"]
+        earlier = event["from"]
+        text = f"{later.get('theme') or ''}{later.get('note') or ''}"
+        admitted = any(hint in text for hint in ADMIT_HINTS)
+        flips.append(
+            {
+                "kind": "翻案",
+                "claim": f"{later.get('date')} {later.get('theme')}",
+                "record": (
+                    f"{earlier.get('date')} 起是"
+                    f"{'多' if int(earlier.get('side') or 0) > 0 else '空'} {earlier.get('symbol')}"
+                ),
+                "verdict": "对得上" if admitted else "对不上",
+            }
+        )
+    for row in sorted(rows, key=lambda item: item.get("date") or ""):
+        text = f"{row.get('theme') or ''}{row.get('note') or ''}"
+        if not any(hint in text for hint in ADMIT_HINTS):
+            continue
+        prior = [
+            other
+            for other in rows
+            if other.get("symbol") == row.get("symbol")
+            and (other.get("date") or "") < (row.get("date") or "")
+            and other.get("dir_window") == "错"
+        ]
+        if prior:
+            last = prior[-1]
+            admits.append(
+                {
+                    "kind": "事后改口",
+                    "claim": f"{row.get('date')} {row.get('theme')}",
+                    "record": f"{last.get('date')} {last.get('theme')} 窗口方向{last.get('dir_window')}",
+                    "verdict": "对得上",
+                }
+            )
+    if posts:
+        if not admits:
+            dated = sorted(
+                (
+                    (post_day(post), vpush.strip_html(str(post.get("text") or post.get("description") or "")))
+                    for post in posts
+                ),
+                key=lambda item: item[0].isoformat() if item[0] else "",
+            )
+            for day, text in dated:
+                if not day or not any(hint in text for hint in ADMIT_HINTS):
+                    continue
+                if not _consistency_relevant(text, rows):
+                    continue
+                prior = [
+                    other
+                    for other in rows
+                    if (other.get("date") or "") < day.isoformat() and other.get("dir_window") == "错"
+                ]
+                if not prior:
+                    continue
+                last = prior[-1]
+                admits.append(
+                    {
+                        "kind": "事后改口",
+                        "claim": f"{day} {text[:48]}",
+                        "record": f"{last.get('date')} {last.get('theme')} 窗口方向{last.get('dir_window')}",
+                        "verdict": "对得上",
+                    }
+                )
+                break
+        for post in posts:
+            text = vpush.strip_html(str(post.get("text") or post.get("description") or ""))
+            hit = next((hint for hint in RETRO_HINTS if hint in text), None)
+            if not hit:
+                continue
+            if not _consistency_relevant(text, rows):
+                continue
+            day = post_day(post)
+            retros.append(
+                {
+                    "kind": "事后叙事",
+                    "claim": f"{day or ''} {hit}：{text[:48]}",
+                    "record": "对照首次入选日，不要把复盘当成当时判断",
+                    "verdict": "需对照",
+                }
+            )
+            if len(retros) >= 3:
+                break
+    unexplained = [item for item in flips if item.get("verdict") == "对不上"]
+    unexplained.sort(key=lambda item: item.get("claim") or "", reverse=True)
+    items = admits[:2] + unexplained[:4] + retros[:2]
+    mismatch = sum(1 for item in items if item.get("verdict") == "对不上")
+    if mismatch:
+        headline = f"{mismatch} 处公开表述和计分表对不上。"
+    elif items:
+        headline = "有翻案或事后叙事，先对表再下结论。"
+    else:
+        headline = "这批样本里没有自动对上的表述冲突。"
+    return {
+        "headline": headline,
+        "items": items,
+        "note": "对照的是公开表述和计分表，不是测谎。",
+    }
+
+
+MBTI_LEAN = {"E": "外向", "I": "内向", "S": "实感", "N": "直觉", "T": "思考", "F": "情感", "J": "判断", "P": "知觉"}
+MBTI_S = ("点位", "均线", "开仓", "清仓", "止盈", "反弹", "波段", "现在可以")
+MBTI_N = ("硅光", "周期", "浪潮", "产业", "牛市", "朱格拉", "主升", "领头羊", "硬核")
+MBTI_T = ("业绩", "ETF", "市值", "计算器", "仓位", "净利润")
+MBTI_F = ("心态", "卖飞", "纠错", "杂念", "认知不足")
+MBTI_J = ("拿到结束", "一定", "注定", "终点", "计划", "锁仓")
+MBTI_P = ("逢低", "反弹", "击球", "现在可以", "波段")
+
+
+def _hits(text: str, words: tuple[str, ...]) -> int:
+    return sum(text.count(word) for word in words)
+
+
+def _mbti_pick(left: str, right: str, left_n: int, right_n: int, tie: str) -> tuple[str, int, int]:
+    if left_n > right_n:
+        return left, left_n, right_n
+    if right_n > left_n:
+        return right, right_n, left_n
+    return tie, left_n, right_n
+
+
+def auto_mbti(sc: dict, posts: list | None = None) -> dict:
+    rows = list(sc.get("rows") or [])
+    summary = sc.get("summary") or {}
+    note = "这是公开发帖和计分表的 MBTI 风格对照，不是量表，也不是心理诊断。"
+    if persona_level(sc) == "draft":
+        return {"draft": True, "type": "", "headline": "样本偏短或偏薄，不做 MBTI 对照。", "axes": [], "note": note}
+    themes = " ".join(f"{row.get('theme') or ''} {row.get('note') or ''}" for row in rows)
+    reply_n = 0
+    orig_n = 0
+    blob = themes
+    if posts:
+        chunks = []
+        for post in posts:
+            text = vpush.strip_html(str(post.get("text") or post.get("description") or ""))
+            chunks.append(text)
+            if text.startswith("回复") or "回复 @" in text[:24]:
+                reply_n += 1
+            else:
+                orig_n += 1
+        blob = themes + " " + " ".join(chunks)
+    st_n = int((summary.get("structure") or {}).get("n") or 0) or sum(1 for row in rows if row.get("kind") == "structure")
+    ta_n = int((summary.get("tactical") or {}).get("n") or 0) or sum(1 for row in rows if row.get("kind") == "tactical")
+    e_n = reply_n + blob.count("老登") + blob.count("对线") + themes.count("喷")
+    i_n = orig_n + themes.count("框架")
+    if not posts:
+        i_n += st_n
+    s_n = ta_n + _hits(themes, MBTI_S)
+    n_n = st_n + _hits(themes, MBTI_N) + sum(1 for hint in ROUND_HINTS if hint in themes)
+    t_n = _hits(themes, MBTI_T) + len(summary.get("price_targets") or [])
+    f_n = _hits(themes, MBTI_F)
+    flips = flip_events(rows)
+    j_n = _hits(themes, MBTI_J)
+    p_n = len(flips) * 2 + _hits(themes, MBTI_P)
+    ei, _, _ = _mbti_pick("E", "I", e_n, i_n, "E" if reply_n > orig_n else "I")
+    sn, _, _ = _mbti_pick("S", "N", s_n, n_n, "N" if st_n >= ta_n else "S")
+    tf, _, _ = _mbti_pick("T", "F", t_n, f_n, "T")
+    jp, _, _ = _mbti_pick("J", "P", j_n, p_n, "P" if flips else "J")
+    typ = f"{ei}{sn}{tf}{jp}"
+    axes = [
+        {
+            "axis": "E/I",
+            "letter": ei,
+            "lean": MBTI_LEAN[ei],
+            "evidence": (
+                f"语料回复 {reply_n}、原创 {orig_n}，"
+                f"「老登」{blob.count('老登')} 次、「对线」{blob.count('对线')} 次。"
+                if posts
+                else f"公开判断里结构 {st_n}、战术 {ta_n}，对线词 {themes.count('对线')} 次。"
+            ),
+        },
+        {
+            "axis": "S/N",
+            "letter": sn,
+            "lean": MBTI_LEAN[sn],
+            "evidence": f"战术 {ta_n} / 结构 {st_n}。点位词 {_hits(themes, MBTI_S)}，产业/浪潮词 {_hits(themes, MBTI_N)}。",
+        },
+        {
+            "axis": "T/F",
+            "letter": tf,
+            "lean": MBTI_LEAN[tf],
+            "evidence": f"业绩/仓位词 {t_n}，心态/卖飞词 {f_n}。",
+        },
+        {
+            "axis": "J/P",
+            "letter": jp,
+            "lean": MBTI_LEAN[jp],
+            "evidence": f"同一标的翻案 {len(flips)} 次。计划/终点词 {j_n}，逢低/波段词 {p_n}。",
+        },
+    ]
+    return {
+        "draft": False,
+        "type": typ,
+        "headline": f"公开文本对照偏 {typ}。不是量表。",
+        "axes": axes,
+        "note": note,
+    }
 
 
 def auto_playbook(sc: dict) -> list[str]:
@@ -1458,6 +2051,9 @@ def render_html(sc: dict) -> str:
     title = html.escape(sc.get("title") or "公开预测审计")
     conclusion = html.escape(sc.get("conclusion") or auto_conclusion(sc))
     playbook = sc.get("playbook") or auto_playbook(sc)
+    persona = sc.get("persona") or auto_persona(sc)
+    consistency = sc.get("consistency") or auto_consistency(sc)
+    mbti = sc.get("mbti") or auto_mbti(sc)
     cards = giveback_cards(sc)
     year_hits = [round((v.get("hit_rate") or 0) * 100) for _, v in years.items()]
 
@@ -1532,6 +2128,47 @@ def render_html(sc: dict) -> str:
     pills = "".join(
         f'<div class="row"><span class="pill">{i}</span><p>{html.escape(text)}</p></div>'
         for i, text in enumerate(playbook, 1)
+    )
+    persona_rows = [[t.get("name") or "", t.get("evidence") or ""] for t in persona.get("traits") or []]
+    tbl_persona = (
+        table(["习惯", "证据"], persona_rows)
+        if persona_rows
+        else "<p class='small'>样本不够，不写行为画像。</p>"
+    )
+    mbti_rows = [
+        [a.get("axis") or "", f"{a.get('letter') or ''} {a.get('lean') or ''}".strip(), a.get("evidence") or ""]
+        for a in mbti.get("axes") or []
+    ]
+    tbl_mbti = (
+        table(["维度", "倾向", "证据"], mbti_rows)
+        if mbti_rows
+        else "<p class='small'>样本不够，不做 MBTI 对照。</p>"
+    )
+    persona_html = (
+        f'<div class="stack"><h2>行为画像</h2>'
+        f'<p>{html.escape(persona.get("headline") or "")}</p>'
+        f"{tbl_persona}"
+        f'<p>{html.escape(mbti.get("headline") or "")}</p>'
+        f"{tbl_mbti}"
+        f'<p class="small">{html.escape(persona.get("note") or "这是公开行为画像，不是心理诊断或人格量表。")}</p>'
+        f'<p class="small">{html.escape(mbti.get("note") or "这是公开发帖和计分表的 MBTI 风格对照，不是量表，也不是心理诊断。")}</p>'
+        "</div>"
+    )
+    consist_rows = [
+        [i.get("kind") or "", i.get("claim") or "", i.get("record") or "", i.get("verdict") or ""]
+        for i in consistency.get("items") or []
+    ]
+    tbl_consist = (
+        table(["类型", "后来怎么说", "当时怎么写", "对照"], consist_rows)
+        if consist_rows
+        else "<p class='small'>这批样本里没有自动对上的表述冲突。</p>"
+    )
+    consist_html = (
+        f'<div class="stack"><h2>表述对照</h2>'
+        f'<p>{html.escape(consistency.get("headline") or "")}</p>'
+        f"{tbl_consist}"
+        f'<p class="small">{html.escape(consistency.get("note") or "对照的是公开表述和计分表，不是测谎。")}</p>'
+        "</div>"
     )
     card_html = "".join(
         f'<div class="card"><h4>{html.escape(r.get("theme") or r.get("symbol") or "")}</h4>'
@@ -1623,6 +2260,8 @@ def render_html(sc: dict) -> str:
     <div class="stat"><b>{hit_pt} / {len(pts)}</b><span>数字价位打中</span></div>
   </div>
   <div class="stack"><h2>跟单口径</h2>{pills}</div>
+  {persona_html}
+  {consist_html}
   <div class="stack">
     <h2>照做与对照</h2>
     <p>{sc.get('n')} 条等权窗口：均值 {html.escape(pct(s.get('copy_window_mean')))}，中位 {html.escape(pct(s.get('copy_window_median')))}。只做结构中位 {html.escape(pct(st.get('copy_window_median')))}；只做战术中位 {html.escape(pct(ta.get('copy_window_median')))}。</p>
